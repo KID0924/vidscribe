@@ -1,5 +1,5 @@
 import type {
-  BurnJob, Clip, ClipExportJob, ClipsJob, DictEntry, FixJob, Project, Segment,
+  BurnJob, Clip, ClipExportJob, ClipsJob, DictEntry, FixJob, Lang, Project, Segment,
 } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
@@ -28,8 +28,13 @@ export const api = {
   deleteProject: (id: string) =>
     fetch(`/api/projects/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
 
-  retranscribe: (id: string) =>
-    fetch(`/api/projects/${id}/transcribe`, { method: "POST" }).then((r) => json<Project>(r)),
+  /** lang 給定時順便換辨識語言(選錯語言時重跑用)。 */
+  retranscribe: (id: string, lang?: Lang) =>
+    fetch(`/api/projects/${id}/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(lang ? { lang } : {}),
+    }).then((r) => json<Project>(r)),
 
   getSubtitles: (id: string) =>
     fetch(`/api/projects/${id}/subtitles`).then((r) =>
@@ -163,6 +168,7 @@ export const api = {
 /** 用 XHR 上傳才拿得到進度。 */
 export function uploadMedia(
   file: File,
+  lang: Lang,
   onProgress: (ratio: number) => void
 ): Promise<Project> {
   return new Promise((resolve, reject) => {
@@ -187,6 +193,7 @@ export function uploadMedia(
     xhr.onerror = () => reject(new Error("連不上伺服器"));
     const form = new FormData();
     form.append("file", file);
+    form.append("lang", lang);
     xhr.send(form);
   });
 }

@@ -102,7 +102,8 @@ def _transcribe(meta: dict, audio, duration: float) -> list[dict]:
     model, device = _get_model(lambda: _update(meta, status="loading_model"))
     _update(meta, status="transcribing", progress=0.0, device=device)
 
-    lang = None if config.LANGUAGE == "auto" else config.LANGUAGE
+    setting = config.normalize_lang(meta.get("lang"))
+    lang = None if setting == "auto" else setting
     kwargs = dict(language=lang, word_timestamps=True, vad_filter=True)
     if lang == "zh":
         kwargs["initial_prompt"] = "以下是繁體中文的內容。"

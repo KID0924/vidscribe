@@ -19,7 +19,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import llm, storage
+from . import config, llm, storage
 
 MODEL = os.environ.get("VIDSCRIBE_CLIPS_MODEL", "sonnet")
 MIN_SEC = float(os.environ.get("VIDSCRIBE_CLIP_MIN", "15"))
@@ -58,7 +58,14 @@ SCHEMA = json.dumps(
     separators=(",", ":"),
 )
 
-PROMPT = f"""你是短影音選題剪輯師。最後面附上一支長影片的逐字稿 JSON 陣列(繁體中文),每項有行號 i、開始秒數 s、文字 t。
+def _prompt(lang: str) -> str:
+    """選題提示詞。英文影片的標題用英文(方便直接當 Shorts 標題),理由一律用繁體中文。"""
+    title_rule = (
+        "- title:短片標題(英文,與影片語言一致,60 字元內)"
+        if lang == "en"
+        else "- title:短片標題(繁體中文,15 字內)"
+    )
+    return f"""你是短影音選題剪輯師。最後面附上一支長影片的逐字稿 JSON 陣列(繁體中文),每項有行號 i、開始秒數 s、文字 t。
 請挑出 3~8 段適合做成直式短影片(Shorts / Reels / TikTok)的片段。
 挑選規則:
 - 以「行」為單位:回傳起始行 a 與結束行 b(含頭尾),片段長度約 {MIN_SEC:.0f}~{MAX_SEC:.0f} 秒
@@ -71,9 +78,9 @@ PROMPT = f"""你是短影音選題剪輯師。最後面附上一支長影片的�
 - curiosity:好奇缺口(讓人想看完)
 - value:資訊價值/金句
 其他欄位:
-- title:短片標題(繁體中文,15 字內)
+{title_rule}
 - hook_text:片段開頭第一句原文(照抄,不要改寫)
-- reason:為什麼這段能紅(50 字內,講具體亮點)
+- reason:為什麼這段能紅(繁體中文,50 字內,講具體亮點)
 - self_contained:這段是否自成一體
 沒有值得剪的片段就回傳空的 clips。"""
 
@@ -277,7 +284,10 @@ def start(pid: str) -> dict:
             raise RuntimeError("短片分析已在進行中")
         _jobs[pid] = job
 
-    threading.Thread(target=_run, args=(pid, cmd, segments, job), daemon=True).start()
+    prompt = _prompt(config.effective_lang(meta))
+    threading.Thread(
+        target=_run, args=(pid, cmd, segments, job, prompt), daemon=True
+    ).start()
     return _public_state(job)
 
 
@@ -331,7 +341,9 @@ def _validate(segments: list[dict], raw: list) -> list[dict]:
     return kept
 
 
-def _run(pid: str, cmd: list[str], segments: list[dict], job: dict) -> None:
+def _run(
+    pid: str, cmd: list[str], segments: list[dict], job: dict, prompt: str
+) -> None:
     try:
         payload = json.dumps(
             [
@@ -360,7 +372,7 @@ def _run(pid: str, cmd: list[str], segments: list[dict], job: dict) -> None:
             job["proc"] = proc
         try:
             stdout, stderr = proc.communicate(
-                input=f"{PROMPT}\n\n逐字稿內容:\n{payload}", timeout=TIMEOUT
+                input=f"{prompt}\n\n逐字稿內容:\n{payload}", timeout=TIMEOUT
             )
         except subprocess.TimeoutExpired:
             _kill_tree(proc)

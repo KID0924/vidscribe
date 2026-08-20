@@ -12,6 +12,19 @@ export interface Segment {
   words?: Word[];
 }
 
+/** 辨識語言設定:中文、英文,或讓 Whisper 自動偵測 */
+export type Lang = "zh" | "en" | "auto";
+
+export const LANG_OPTIONS: { value: Lang; label: string }[] = [
+  { value: "zh", label: "中文" },
+  { value: "en", label: "英文" },
+  { value: "auto", label: "自動偵測" },
+];
+
+export function langLabel(lang?: string | null): string {
+  return LANG_OPTIONS.find((o) => o.value === lang)?.label ?? "中文";
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -29,6 +42,9 @@ export interface Project {
   progress: number;
   error: string | null;
   duration: number | null;
+  /** 使用者選的辨識語言 */
+  lang?: Lang;
+  /** Whisper 實際偵測到的語言 */
   language: string | null;
   has_video: boolean | null;
   model: string;

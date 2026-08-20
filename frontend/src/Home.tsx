@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, uploadMedia } from "./api";
 import Brand from "./Brand";
-import { RUNNING_STATUSES, statusLabel, type Project } from "./types";
+import {
+  LANG_OPTIONS,
+  RUNNING_STATUSES,
+  langLabel,
+  statusLabel,
+  type Lang,
+  type Project,
+} from "./types";
 import { formatTime } from "./segments";
 
 interface Upload {
@@ -15,6 +22,11 @@ export default function Home() {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
   const [ffmpegOk, setFfmpegOk] = useState(true);
+  const [lang, setLang] = useState<Lang>(
+    () => (localStorage.getItem("vidscribe:lang") as Lang) || "zh"
+  );
+  const langRef = useRef(lang);
+  langRef.current = lang;
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -39,7 +51,7 @@ export default function Home() {
       for (const file of Array.from(files)) {
         const entry: Upload = { name: file.name, progress: 0 };
         setUploads((u) => [...u, entry]);
-        uploadMedia(file, (ratio) => {
+        uploadMedia(file, langRef.current, (ratio) => {
           setUploads((u) => u.map((x) => (x === entry ? { ...x, progress: ratio } : x)));
         })
           .then(() => {
@@ -107,6 +119,27 @@ export default function Home() {
           />
         </div>
 
+        <div className="upload-lang">
+          <label htmlFor="lang-select">辨識語言</label>
+          <select
+            id="lang-select"
+            className="select"
+            value={lang}
+            onChange={(e) => {
+              const v = e.target.value as Lang;
+              setLang(v);
+              localStorage.setItem("vidscribe:lang", v);
+            }}
+          >
+            {LANG_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <span className="hint">選錯也沒關係,進專案後可以換語言重新辨識</span>
+        </div>
+
         {uploads.length > 0 && (
           <section className="upload-list">
             {uploads.map((u, i) => (
@@ -151,6 +184,9 @@ export default function Home() {
                       {p.duration ? formatTime(p.duration) : "--:--"}
                     </span>
                     <span>{new Date(p.created_at * 1000).toLocaleDateString("zh-TW")}</span>
+                    {p.lang && p.lang !== "zh" && (
+                      <span className="lang-tag">{langLabel(p.lang)}</span>
+                    )}
                   </div>
                   <div className="project-status">
                     {running && <span className="spinner" aria-hidden />}

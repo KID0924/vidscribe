@@ -55,23 +55,42 @@ def _ass_escape(text: str) -> str:
     return text.replace("{", "(").replace("}", ")").replace("\n", "\\N")
 
 
-def _wrap_line(text: str, max_units: float) -> str:
-    """超寬的行先斷好:中文沒有空白,libass 預設不做 unicode 斷行,會直接爆出畫面。
+def _wrap_tokens(line: str) -> list[str]:
+    """切成換行單位:中日韓字各自一個、拉丁字母的單字整串不拆、空白自成一個。"""
+    out: list[str] = []
+    buf = ""
+    for ch in line:
+        if ord(ch) >= 0x2E80 or ch.isspace():
+            if buf:
+                out.append(buf)
+                buf = ""
+            out.append(ch)
+        else:
+            buf += ch
+    if buf:
+        out.append(buf)
+    return out
 
-    以全形字=1、半形字=0.5 估寬,超過 max_units 就換行。
+
+def _wrap_line(text: str, max_units: float) -> str:
+    """超寬的行先斷好:libass 預設不做 unicode 斷行,中文整行會直接爆出畫面。
+
+    以全形字=1、半形字=0.5 估寬;英文以單字為單位,不會從字中間切開。
     """
     out: list[str] = []
     for line in text.split("\n"):
         cur: list[str] = []
         units = 0.0
-        for ch in line:
-            w = 1.0 if ord(ch) >= 0x2E80 else 0.5
+        for tok in _wrap_tokens(line):
+            w = _char_units(tok)
             if cur and units + w > max_units:
-                out.append("".join(cur))
+                out.append("".join(cur).rstrip())
                 cur, units = [], 0.0
-            cur.append(ch)
+                if tok.isspace():
+                    continue  # 換行後不要以空白開頭
+            cur.append(tok)
             units += w
-        out.append("".join(cur))
+        out.append("".join(cur).rstrip())
     return "\n".join(out)
 
 
@@ -97,6 +116,7 @@ def _karaoke_text(seg: dict, max_units: float) -> str | None:
         if units and units + wu > max_units:
             parts.append("\\N")  # 逐 word 斷行,卡拉OK不走 _wrap_line
             units = 0.0
+            w = {**w, "word": w["word"].lstrip()}  # 換行後不要以空白開頭
         dur = max(round((float(w["end"]) - float(w["start"])) * 100), 1)
         parts.append(f"{{\\kf{dur}}}{_ass_escape(w['word'])}")
         units += wu

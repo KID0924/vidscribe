@@ -16,8 +16,25 @@ FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
 MODEL_NAME = os.environ.get("VIDSCRIBE_MODEL", "large-v3")
 # 模型存在專案資料夾裡:搬資料夾就等於連模型一起搬,不用重新下載
 MODELS_DIR = Path(os.environ.get("VIDSCRIBE_MODELS", str(ROOT_DIR / "models")))
-# "zh" = 固定中文(會加繁體 prompt 與 OpenCC 轉換);"auto" = 自動偵測語言
+# 新專案的預設辨識語言;每個專案可各自覆蓋(上傳時選、之後可重新辨識換語言)
+# "zh" = 中文(加繁體 prompt 與 OpenCC 轉換)、"en" = 英文、"auto" = 自動偵測
+LANGUAGES = ("zh", "en", "auto")
 LANGUAGE = os.environ.get("VIDSCRIBE_LANG", "zh")
+if LANGUAGE not in LANGUAGES:
+    LANGUAGE = "zh"
+
+
+def normalize_lang(value) -> str:
+    """把外部傳進來的語言字串收斂成合法值,不合法就用預設。"""
+    return value if value in LANGUAGES else LANGUAGE
+
+
+def effective_lang(meta: dict) -> str:
+    """專案實際的內容語言,給 AI 功能挑提示詞用;auto 就採用 Whisper 偵測結果。"""
+    lang = normalize_lang(meta.get("lang"))
+    if lang == "auto":
+        lang = meta.get("language") or "zh"
+    return "en" if str(lang).startswith("en") else "zh"
 
 HOST = os.environ.get("VIDSCRIBE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VIDSCRIBE_PORT", "8765"))

@@ -21,14 +21,14 @@ import time
 import traceback
 from pathlib import Path
 
-from . import storage
+from . import config, storage
 
 MODEL = os.environ.get("VIDSCRIBE_FIX_MODEL", "sonnet")
 BATCH_CHARS = 4000  # 每批的字元預算
 BATCH_LINES = 80
 TIMEOUT = 300
 
-PROMPT = """你是台灣的專業字幕校對員。最後面附上一段影片的字幕 JSON 陣列(繁體中文、台灣口語),每項有行號 i 與文字 t。
+PROMPT_ZH = """你是台灣的專業字幕校對員。最後面附上一段影片的字幕 JSON 陣列(繁體中文、台灣口語),每項有行號 i 與文字 t。
 請找出並修正:
 1. 語音辨識造成的同音錯字與選字錯誤(例:其美博物館→奇美博物館、發老→法老、在→再)
 2. 中國用語改成台灣慣用語(例:視頻→影片、質量→品質、軟件→軟體)
@@ -41,15 +41,41 @@ PROMPT = """你是台灣的專業字幕校對員。最後面附上一段影片�
 - 標點維持原樣,不要新增句尾標點
 用 changes 回傳:i 是原行號,t 是修正後的整行文字。整批都沒錯就回傳空的 changes。"""
 
+PROMPT_EN = """You are a professional subtitle proofreader. At the end you get a JSON array of subtitle lines from one video, each with a line number i and the text t.
+Find and fix only these:
+1. Speech-recognition slips: misheard homophones (their / there, to / too, its / it is), wrong word boundaries
+2. Proper nouns, brands and acronyms: correct spelling and capitalisation, for example youtube becomes YouTube, iphone becomes iPhone
+3. Obvious capitalisation or punctuation slips inside a line
+Rules:
+- Return only the lines you changed; leave correct lines out
+- Never add, delete, merge or split lines, and never change the meaning
+- Keep filler words (um, uh, like, you know) exactly as they are; do not tidy up the speech
+- Keep the length close to the original; never rewrite a sentence
+- Do not add sentence-ending punctuation that is not already there
+Use changes to answer: i is the original line number, t is the corrected full line. Return an empty changes array if the batch has nothing wrong."""
+
 # 走 --system-prompt(argv)有兩個地雷:npm 版 claude.cmd 經 cmd /c 轉手,
-# ①多行會被截斷 → 壓成單行;②內嵌 ASCII 雙引號的 \" 跳脫會被 %* 再展開弄壞
-# → 格式用文字描述,不放字面引號
-SYSTEM_PROMPT = (
-    PROMPT.replace("\n", " ")
-    + " 直接回傳純 JSON,不要 markdown 圍欄、不要任何其他文字:"
-    + "頂層是物件,唯一的鍵 changes 是陣列,每個元素是含整數 i(原行號)"
-    + "與字串 t(修正後整行)的物件。"
+# ①多行會被截斷,壓成單行;②內嵌 ASCII 雙引號的跳脫會被再展開弄壞,
+# 所以格式一律用文字描述,不放字面引號(也避開 cmd 的特殊字元)
+_JSON_RULE_ZH = (
+    " 直接回傳純 JSON,不要 markdown 圍欄、不要任何其他文字:"
+    "頂層是物件,唯一的鍵 changes 是陣列,每個元素是含整數 i(原行號)"
+    "與字串 t(修正後整行)的物件。"
 )
+_JSON_RULE_EN = (
+    " Reply with bare JSON only, no markdown fence and no other text: "
+    "a top-level object whose only key changes is an array, each element an "
+    "object with an integer i (the original line number) and a string t "
+    "(the corrected full line)."
+)
+
+
+def system_prompt(lang: str) -> str:
+    """單行系統提示詞:中文與英文各一套,依專案語言挑。"""
+    if lang == "en":
+        return PROMPT_EN.replace("\n", " ") + _JSON_RULE_EN
+    return PROMPT_ZH.replace("\n", " ") + _JSON_RULE_ZH
+
 
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
@@ -189,6 +215,10 @@ def start(pid: str, ids: list[str] | None = None) -> dict:
     cmd = find_claude()
     if cmd is None:
         raise RuntimeError("找不到 claude 指令,請先安裝 Claude Code")
+    meta = storage.load_project(pid)
+    if meta is None:
+        raise RuntimeError("找不到專案")
+    sys_prompt = system_prompt(config.effective_lang(meta))
     segments = storage.load_subtitles(pid)["segments"]
     if not segments:
         raise RuntimeError("這個專案還沒有字幕")
@@ -227,11 +257,15 @@ def start(pid: str, ids: list[str] | None = None) -> dict:
             raise RuntimeError("AI 校正已在進行中")
         _jobs[pid] = job
 
-    threading.Thread(target=_run, args=(pid, cmd, segments, batches, job), daemon=True).start()
+    threading.Thread(
+        target=_run, args=(pid, cmd, segments, batches, job, sys_prompt), daemon=True
+    ).start()
     return _public_state(job)
 
 
-def _run_batch(cmd: list[str], segments: list[dict], indices: list[int]) -> list[dict]:
+def _run_batch(
+    cmd: list[str], segments: list[dict], indices: list[int], sys_prompt: str
+) -> list[dict]:
     payload = json.dumps(
         [{"i": i, "t": segments[i]["text"]} for i in indices], ensure_ascii=False
     )
@@ -241,7 +275,7 @@ def _run_batch(cmd: list[str], segments: list[dict], indices: list[int]) -> list
             "-p",
             "--output-format", "json",
             "--model", MODEL,
-            "--system-prompt", SYSTEM_PROMPT,
+            "--system-prompt", sys_prompt,
             # 連「動態環境段落」也不要:模型看到工作目錄叫 VidScribe,
             # 會把字幕裡的「What's up!」改成「VidScribe!」(實測誤傷)
             "--exclude-dynamic-system-prompt-sections",
@@ -284,21 +318,28 @@ def _run_batch(cmd: list[str], segments: list[dict], indices: list[int]) -> list
     return suggestions
 
 
-def _run(pid: str, cmd: list[str], segments: list[dict], batches: list[list[int]], job: dict) -> None:
+def _run(
+    pid: str,
+    cmd: list[str],
+    segments: list[dict],
+    batches: list[list[int]],
+    job: dict,
+    sys_prompt: str,
+) -> None:
     try:
         for indices in batches:
             if job["cancel"]:
                 job["status"] = "canceled"
                 return
             try:
-                suggestions = _run_batch(cmd, segments, indices)
+                suggestions = _run_batch(cmd, segments, indices, sys_prompt)
             except Exception:
                 # 沒有 schema 強制,偶爾會拿到壞 JSON;重試一次,再失敗才放棄整輪
                 traceback.print_exc()
                 if job["cancel"]:
                     job["status"] = "canceled"
                     return
-                suggestions = _run_batch(cmd, segments, indices)
+                suggestions = _run_batch(cmd, segments, indices, sys_prompt)
             with _lock:
                 job["suggestions"].extend(suggestions)
                 job["done"] += 1

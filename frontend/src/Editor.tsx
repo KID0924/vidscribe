@@ -22,7 +22,9 @@ import { diffParts } from "./diff";
 import ClipsPanel from "./ClipsPanel";
 import SafeFrame, { SAFE_FRAMES, SafeZoneOverlay, matchPresetByRatio } from "./SafeFrame";
 import {
+  LANG_OPTIONS,
   RUNNING_STATUSES,
+  langLabel,
   statusLabel,
   type BurnJob,
   type Clip,
@@ -31,6 +33,7 @@ import {
   type DictEntry,
   type FixJob,
   type FixSuggestion,
+  type Lang,
   type Project,
   type Segment,
 } from "./types";
@@ -735,17 +738,19 @@ export default function Editor({ projectId }: { projectId: string }) {
   const statIdx = selectedIdx >= 0 ? selectedIdx : activeIdx;
   const statSeg = statIdx >= 0 ? segments[statIdx] : null;
 
-  const retranscribe = () => {
+  const retranscribe = (lang: Lang) => {
+    const changing = lang !== (project?.lang ?? "zh");
     if (
       segmentsRef.current.length > 0 &&
       !confirm(
-        "重新辨識會覆蓋目前的字幕(舊字幕會備份成專案資料夾裡的 subtitles.bak.json)。確定繼續?"
+        (changing ? `辨識語言改成「${langLabel(lang)}」並重跑。` : "") +
+          "重新辨識會覆蓋目前的字幕(舊字幕會備份成專案資料夾裡的 subtitles.bak.json)。確定繼續?"
       )
     ) {
       return;
     }
     api
-      .retranscribe(projectId)
+      .retranscribe(projectId, lang)
       .then(setProject)
       .catch((e: Error) => alert(e.message));
   };
@@ -1278,9 +1283,7 @@ export default function Editor({ projectId }: { projectId: string }) {
           )}
           {project.error && <p className="error-text">{project.error}</p>}
           {(project.status === "error" || project.status === "interrupted") && (
-            <button className="btn" onClick={retranscribe}>
-              重新辨識
-            </button>
+            <RetranscribeMenu lang={project.lang} onPick={retranscribe} />
           )}
         </main>
       </div>
@@ -1416,6 +1419,7 @@ export default function Editor({ projectId }: { projectId: string }) {
               短片
             </button>
           ))}
+        <RetranscribeMenu lang={project.lang} onPick={retranscribe} />
         <details className="hotkey-menu">
           <summary className="btn small">快捷鍵</summary>
           <div className="hotkey-panel">
@@ -1589,9 +1593,7 @@ export default function Editor({ projectId }: { projectId: string }) {
             {segments.length === 0 ? (
               <div className="editor-message">
                 <p>沒有辨識到任何語音。</p>
-                <button className="btn" onClick={retranscribe}>
-                  重新辨識
-                </button>
+                <RetranscribeMenu lang={project.lang} onPick={retranscribe} />
               </div>
             ) : rows.length === 0 ? (
               <p className="empty-hint">沒有符合「{query}」的字幕。</p>
@@ -1889,6 +1891,38 @@ export default function Editor({ projectId }: { projectId: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** 重新辨識選單:順便換語言(選錯語言時重跑用)。 */
+function RetranscribeMenu({
+  lang,
+  onPick,
+}: {
+  lang?: Lang;
+  onPick: (lang: Lang) => void;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  return (
+    <details className="export-menu" ref={ref}>
+      <summary className="btn small" title="重新跑語音辨識,可順便換語言">
+        重新辨識
+      </summary>
+      <div className="export-items">
+        {LANG_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            onClick={() => {
+              if (ref.current) ref.current.open = false;
+              onPick(o.value);
+            }}
+          >
+            {o.label}
+            {(lang ?? "zh") === o.value ? " ✓" : ""}
+          </button>
+        ))}
+      </div>
+    </details>
   );
 }
 

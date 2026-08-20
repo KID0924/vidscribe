@@ -11,7 +11,8 @@
 ## 功能
 
 - **語音辨識**:faster-whisper(large-v3),NVIDIA GPU 加速、無卡自動退 CPU;
-  輸出自動簡轉繁+台灣用語(OpenCC)
+  中文輸出自動簡轉繁+台灣用語(OpenCC)。**每個專案可選中文/英文/自動偵測**,
+  選錯可以換語言重新辨識;英文專案的 AI 校正會自動改用英文校對規則
 - **編輯器**:Enter 斷句、句首 Backspace 合併、Tab 跳行、全程鍵盤操作;
   復原/重做、自動存檔、搜尋過濾、每句字數與閱讀速度統計
 - **波形區**:拖拉字幕方塊調時間、磁吸(鄰句/Mark 點/畫面切點)、
@@ -83,7 +84,7 @@ git clone <本倉庫>
 | 變數 | 預設 | 說明 |
 |---|---|---|
 | `VIDSCRIBE_MODEL` | `large-v3` | Whisper 模型(低配機器可用 `medium`/`small`) |
-| `VIDSCRIBE_LANG` | `zh` | 固定中文;設 `auto` 自動偵測語言 |
+| `VIDSCRIBE_LANG` | `zh` | 新專案的預設語言(`zh`/`en`/`auto`),每個專案可自行覆蓋 |
 | `VIDSCRIBE_PORT` | `8765` | 服務埠 |
 | `VIDSCRIBE_DATA` | `./projects` | 專案資料存放位置 |
 | `VIDSCRIBE_MODELS` | `./models` | 模型存放位置 |

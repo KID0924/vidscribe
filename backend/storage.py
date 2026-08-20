@@ -51,7 +51,7 @@ def discard_file(path: Path) -> None:
         pass
 
 
-def create_project(display_name: str, media_suffix: str) -> dict:
+def create_project(display_name: str, media_suffix: str, lang: str | None = None) -> dict:
     pid = uuid.uuid4().hex[:12]
     d = project_dir(pid)
     d.mkdir(parents=True, exist_ok=True)
@@ -64,7 +64,8 @@ def create_project(display_name: str, media_suffix: str) -> dict:
         "progress": 0.0,
         "error": None,
         "duration": None,
-        "language": None,
+        "lang": config.normalize_lang(lang),  # 使用者選的辨識語言
+        "language": None,                     # Whisper 實際偵測到的語言
         "has_video": None,
         "model": config.MODEL_NAME,
         "device": None,

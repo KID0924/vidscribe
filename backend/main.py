@@ -4,7 +4,7 @@ import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -84,12 +84,12 @@ def list_projects():
 
 
 @app.post("/api/projects")
-def create_project(file: UploadFile = File(...)):
+def create_project(file: UploadFile = File(...), lang: str = Form(None)):
     # 同步函式:FastAPI 會丟進 threadpool,大檔複製才不會卡住整個事件迴圈
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in MEDIA_EXTS:
         raise HTTPException(400, f"不支援的檔案格式:{suffix or '(無副檔名)'}")
-    meta = storage.create_project(Path(file.filename).stem, suffix)
+    meta = storage.create_project(Path(file.filename).stem, suffix, lang)
     dest = storage.project_dir(meta["id"]) / meta["media_file"]
     try:
         with dest.open("wb") as f:
@@ -127,8 +127,13 @@ def delete_project(pid: str):
 
 
 @app.post("/api/projects/{pid}/transcribe")
-def retranscribe(pid: str):
+def retranscribe(pid: str, body: dict = Body(None)):
     meta = _get_project_or_404(pid)
+    lang = (body or {}).get("lang")
+    if lang is not None:
+        # 換語言重跑:先寫回專案再啟動,辨識執行緒才讀得到新設定
+        meta["lang"] = config.normalize_lang(lang)
+        storage.save_project(meta)
     if not transcriber.start_job(pid):
         raise HTTPException(409, "辨識已在進行中")
     return storage.load_project(pid) or meta
