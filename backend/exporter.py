@@ -124,6 +124,40 @@ def _karaoke_text(seg: dict, max_units: float) -> str | None:
     return "".join(parts)
 
 
+def _seg_layout(
+    st: dict, width: int, height: int, ref: int, scale: float,
+    margin_lr: int, fs: int, outline: int, shadow: int,
+) -> tuple[float, str, str]:
+    """逐句覆蓋 → (這句的一行字數, Dialogue 的 MarginL,R,V, 要前置的樣式標籤)。
+
+    水平位移靠左右邊距不對稱做出來:Alignment=2 是置中對齊,文字會落在
+    MarginL 與 (width - MarginR) 的正中間,所以兩邊各推 2*dx 就把中心移到 x。
+    代價是可用寬度跟著少 2*|dx| —— 這是實話,字往邊上挪本來就塞不下那麼多,
+    一行字數一起縮才不會在成品裡爆出畫面。
+    """
+    s_scale = float(st.get("scale", scale))
+    s_x = float(st.get("x", 0.5))
+    s_y = st.get("y")
+
+    if s_scale == scale:
+        s_fs, s_out, s_shad = fs, outline, shadow
+    else:
+        s_fs = max(round(ref * 0.055 * s_scale), 16)
+        s_out = max(round(ref * 0.004 * s_scale), 2)
+        s_shad = max(round(ref * 0.002 * s_scale), 1)
+
+    dx = round((s_x - 0.5) * width)
+    m_l = margin_lr + max(0, 2 * dx)
+    m_r = margin_lr + max(0, -2 * dx)
+    # MarginV 給 0 代表沿用 Style 的值,沒覆蓋 y 就別動它
+    m_v = 0 if s_y is None else max(round(height * float(s_y)), 20)
+    usable = max(width - m_l - m_r, s_fs)
+    s_units = max(usable / s_fs * 0.95, 4.0)
+    # ScaledBorderAndShadow 只跟解析度縮放,不會跟著 \fs 走,描邊要自己補上
+    tags = "{" + f"\\fs{s_fs}\\bord{s_out}\\shad{s_shad}" + "}" if s_fs != fs else ""
+    return s_units, f"{m_l},{m_r},{m_v}", tags
+
+
 def to_ass(
     segments: list[dict],
     width: int,
@@ -137,6 +171,11 @@ def to_ass(
     margin_v_ratio:字幕距底比例。直式短片要避開 Shorts/Reels 底部 UI 區,傳 0.24。
     scale:專案設定的字級倍率,1.0 = 原本的短邊 5.5%。描邊跟著一起縮放,
     比例才不會在放大時看起來太細;字放大後一行塞得下的字數(max_units)也自動變少。
+
+    每句可以用 seg["style"] 覆蓋 scale / x(水平中心)/ y(距底),見
+    config.normalize_seg_style;位移走 Dialogue 自己的 MarginL/R/V 欄位,不用
+    \\pos —— \\pos 會連 libass 的邊界處理一起關掉,得自己重算所有幾何。
+    沒有覆蓋的句子照樣寫 0,0,0(沿用 Style),輸出與加這個功能前一模一樣。
     """
     # 字級按短邊算:橫式=高(行為不變),直式=寬(按高算 9:16 會一行塞不到十個字)
     ref = min(width, height)
@@ -171,11 +210,19 @@ def to_ass(
     for s in segments:
         if not s["text"].strip():
             continue
-        text = _karaoke_text(s, max_units) if karaoke else None
+        st = s.get("style") or {}
+        if st:
+            s_units, margins, tags = _seg_layout(
+                st, width, height, ref, scale, margin_lr, fs, outline, shadow
+            )
+        else:
+            s_units, margins, tags = max_units, "0,0,0", ""
+        text = _karaoke_text(s, s_units) if karaoke else None
         if text is None:
-            text = _ass_escape(_wrap_line(s["text"], max_units))
+            text = _ass_escape(_wrap_line(s["text"], s_units))
         events.append(
-            f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},Default,,0,0,0,,{text}"
+            f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},"
+            f"Default,,{margins},,{tags}{text}"
         )
     return header + "\n".join(events) + "\n"
 

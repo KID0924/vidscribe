@@ -28,6 +28,7 @@ import {
   SUB_STYLE_DEFAULT,
   SUB_STYLE_RANGE,
   langLabel,
+  normalizeSegStyle,
   normalizeSubStyle,
   statusLabel,
   type BurnJob,
@@ -39,6 +40,7 @@ import {
   type FixSuggestion,
   type Lang,
   type Project,
+  type SegStyle,
   type Segment,
   type SubStyle,
 } from "./types";
@@ -392,7 +394,12 @@ export default function Editor({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     if (!loadedRef.current) return;
-    if (justLoadedRef.current === segments) return;
+    if (justLoadedRef.current === segments) {
+      // 只跳過「剛載入」那一次。之後如果復原(Ctrl+Z)回到跟載入時一模一樣的
+      // 內容,還是得存回去——不然被撤掉的編輯仍留在檔案裡,狀態列卻寫著已存檔。
+      justLoadedRef.current = null;
+      return;
+    }
     setSaveState("dirty");
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(doSave, 800);
@@ -402,12 +409,34 @@ export default function Editor({ projectId }: { projectId: string }) {
   // Mark 點變動也觸發自動存檔
   useEffect(() => {
     if (!loadedRef.current) return;
-    if (justLoadedMarksRef.current === marks) return;
+    if (justLoadedMarksRef.current === marks) {
+      justLoadedMarksRef.current = null; // 同上:只擋載入後那一次
+      return;
+    }
     setSaveState("dirty");
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(doSave, 800);
     return () => window.clearTimeout(saveTimer.current);
   }, [marks, doSave]);
+
+  /** 改某一句的樣式覆蓋;patch 給 null 代表整個拿掉,回到專案設定。 */
+  const setSegStyle = useCallback(
+    (id: string, patch: SegStyle | null) => {
+      setSegments((prev) =>
+        prev.map((seg) => {
+          if (seg.id !== id) return seg;
+          const next = patch === null ? null : normalizeSegStyle({ ...seg.style, ...patch });
+          if (next === null) {
+            if (!seg.style) return seg; // 本來就沒有,不要製造一筆復原紀錄
+            const { style: _drop, ...rest } = seg;
+            return rest;
+          }
+          return { ...seg, style: next };
+        })
+      );
+    },
+    [setSegments]
+  );
 
   // 還在等 debounce 的樣式先送出去,匯出才會照著預覽跑
   const flushSubStyle = useCallback(() => {
@@ -1536,6 +1565,7 @@ export default function Editor({ projectId }: { projectId: string }) {
                 currentTime={currentTime}
                 style={subStyle}
                 clipLayout={previewClip ? (isStackPreview ? "stack" : "single") : null}
+                onMove={setSegStyle}
               />
             )}
             {previewClip && !isStackPreview && (
@@ -1582,7 +1612,13 @@ export default function Editor({ projectId }: { projectId: string }) {
               <button className="btn small" onClick={exitPreview}>
                 離開直式預覽
               </button>
-              <SubStyleMenu style={subStyle} onChange={changeSubStyle} clipMode />
+              <SubStyleMenu
+                style={subStyle}
+                onChange={changeSubStyle}
+                clipMode
+                seg={null}
+                onSegChange={setSegStyle}
+              />
               <span className="hint">
                 {isStackPreview
                   ? "上下兩區各自拖曳調整取景、右上 +/− 縮放臉部;構圖會存起來,匯出照預覽"
@@ -1609,7 +1645,13 @@ export default function Editor({ projectId }: { projectId: string }) {
                   </option>
                 ))}
               </select>
-              <SubStyleMenu style={subStyle} onChange={changeSubStyle} clipMode={false} />
+              <SubStyleMenu
+                style={subStyle}
+                onChange={changeSubStyle}
+                clipMode={false}
+                seg={activeSeg}
+                onSegChange={setSegStyle}
+              />
               <span className="hint">紅色斜紋是平台 UI 會遮住的區域,字幕壓到就該換行</span>
             </div>
           )}
@@ -1940,17 +1982,23 @@ export default function Editor({ projectId }: { projectId: string }) {
 }
 
 /**
- * 字幕樣式選單:字級倍率與距底比例。只影響燒錄成品與短片,SRT/VTT 不受影響。
- * clipMode(直式預覽)時距底由平台安全區決定,只留字級可調。
+ * 字幕樣式選單:上半是整個專案的預設,下半是「這一句」的覆蓋。
+ * 只影響燒錄成品與短片,SRT/VTT 不受影響。
+ * clipMode(直式預覽)時距底由平台安全區決定、也不吃逐句覆蓋,只留字級可調。
  */
 function SubStyleMenu({
   style,
   onChange,
   clipMode,
+  seg,
+  onSegChange,
 }: {
   style: SubStyle;
   onChange: (patch: Partial<SubStyle>) => void;
   clipMode: boolean;
+  /** 目前播放到的那一句;null 就不顯示逐句區塊 */
+  seg: Segment | null;
+  onSegChange: (id: string, patch: SegStyle | null) => void;
 }) {
   const isDefault =
     style.scale === SUB_STYLE_DEFAULT.scale && style.margin_v === SUB_STYLE_DEFAULT.margin_v;
@@ -1997,6 +2045,43 @@ function SubStyleMenu({
           回到預設
         </button>
         <p className="sub-style-note">只影響燒錄成品與短片,匯出的字幕檔不受影響。</p>
+
+        {!clipMode && (
+          <div className="sub-style-seg">
+            <div className="sub-style-head">
+              這一句
+              {seg?.style && <span className="sub-style-dot" aria-label="已覆蓋" />}
+            </div>
+            {seg ? (
+              <>
+                <label className="sub-style-row">
+                  <span>字級</span>
+                  <input
+                    type="range"
+                    min={SUB_STYLE_RANGE.scale.min}
+                    max={SUB_STYLE_RANGE.scale.max}
+                    step={SUB_STYLE_RANGE.scale.step}
+                    value={seg.style?.scale ?? style.scale}
+                    onChange={(e) => onSegChange(seg.id, { scale: Number(e.target.value) })}
+                  />
+                  <em>{Math.round((seg.style?.scale ?? style.scale) * 100)}%</em>
+                </label>
+                <button
+                  className="sub-style-reset"
+                  disabled={!seg.style}
+                  onClick={() => onSegChange(seg.id, null)}
+                >
+                  這句回到預設
+                </button>
+                <p className="sub-style-note">
+                  位置直接拖曳畫面上的字幕。逐句設定只作用在橫式成品,直式短片用專案設定。
+                </p>
+              </>
+            ) : (
+              <p className="sub-style-note">把播放頭移到某一句上,才能單獨調整那一句。</p>
+            )}
+          </div>
+        )}
       </div>
     </details>
   );
@@ -2153,7 +2238,12 @@ const Row = memo(function Row({
       ) : (
         <span className="row-text">{seg.text}</span>
       )}
-      <span className="row-count">{seg.text.replace(/\s/g, "").length}</span>
+      <span className="row-count">
+        {seg.style && (
+          <span className="row-style-dot" title="這句有自訂字級或位置" aria-label="已自訂樣式" />
+        )}
+        {seg.text.replace(/\s/g, "").length}
+      </span>
       <button
         className="row-delete"
         title="刪除這句字幕"

@@ -155,9 +155,17 @@ def put_subtitles(pid: str, body: dict = Body(...)):
     segments = body.get("segments")
     if not isinstance(segments, list):
         raise HTTPException(400, "segments 必須是陣列")
+    clean = []
     for s in segments:
         if not (isinstance(s, dict) and "start" in s and "end" in s and "text" in s):
             raise HTTPException(400, "字幕格式錯誤")
+        # 逐句樣式在這裡收斂:壞值不會流到 ASS,沒有覆蓋的句子也不留空欄位
+        style = config.normalize_seg_style(s.get("style"))
+        if style is None:
+            clean.append({k: v for k, v in s.items() if k != "style"})
+        else:
+            clean.append({**s, "style": style})
+    segments = clean
     marks = body.get("marks") or []
     if not (isinstance(marks, list) and all(isinstance(m, (int, float)) for m in marks)):
         raise HTTPException(400, "marks 必須是數字陣列")

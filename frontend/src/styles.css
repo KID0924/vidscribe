@@ -644,6 +644,24 @@ button {
   display: block;
 }
 
+/* 一般模式可以直接拖字幕改這一句的位置;疊層本身仍然不吃事件 */
+.subtitle-text.draggable {
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.subtitle-overlay.dragging .subtitle-text.draggable {
+  cursor: grabbing;
+}
+
+/* 拖曳中把可用範圍框出來,才知道字被推到多窄 */
+.subtitle-overlay.dragging {
+  outline: 1px dashed rgba(255, 255, 255, 0.5);
+  outline-offset: 2px;
+}
+
 /* ---- 字幕列表 ---- */
 
 .subtitle-pane {
@@ -1538,15 +1556,21 @@ a.btn {
 
 /* ---- 字幕樣式選單 ---- */
 
-/* 控制列在左邊,選單要往右展開才不會頂出面板外 */
+/* 控制列在左邊,選單往右展開才不會頂出面板外;
+   又因為它就貼在畫面底部、面板還比別的選單高,往上開才不會被視窗切掉 */
 .sub-style-menu .export-items {
   left: 0;
   right: auto;
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 
 .sub-style-panel {
   min-width: 232px;
   padding: 10px 12px;
+  /* 加上逐句區塊後面板變高,視窗矮的時候上方也可能不夠,給它自己捲 */
+  max-height: min(48vh, 360px);
+  overflow-y: auto;
 }
 
 .sub-style-dot {
@@ -1615,6 +1639,33 @@ a.btn {
   line-height: 1.5;
   color: var(--muted);
   white-space: normal;
+}
+
+/* 逐句覆蓋:跟專案預設分開一塊,免得誤以為調的是全部 */
+.sub-style-seg {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.sub-style-head {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  padding-bottom: 2px;
+}
+
+/* 字幕列表上的小點:掃一眼就知道哪幾句被單獨調過 */
+.row-style-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-right: 4px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--green);
 }
 
 /* ---- 響應式 ---- */

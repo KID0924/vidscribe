@@ -4,7 +4,7 @@
  * 預覽跟燒錄成品長得一樣才有意義——不然使用者照著安全框把字幕調到剛好避開
  * 平台 UI,匯出卻是另一個位置。這裡的比例、斷行規則若要改,兩邊要一起改。
  */
-import type { SubStyle } from "./types";
+import type { SegStyle, SubStyle } from "./types";
 
 /** 直式短片的距底比例:對齊 backend/clip_export.py 的 MARGIN_V_SINGLE / MARGIN_V_STACK。 */
 export const CLIP_MARGIN_V = { single: 0.24, stack: 0.53 };
@@ -116,13 +116,41 @@ export function wrapWords<T extends { word: string }>(words: T[], maxUnits: numb
   return lines;
 }
 
+/** 專案設定 + 逐句覆蓋 + 版型限制,結算成一組實際要用的值。 */
+export interface EffectiveStyle {
+  scale: number;
+  /** 距底比例 */
+  marginV: number;
+  /** 文字中心的水平位置(0..1) */
+  x: number;
+}
+
+/**
+ * 優先序:版型強制 > 逐句覆蓋 > 專案設定。
+ * marginVOverride 是直式短片的平台安全區,它一給就壓過所有設定;同理短片
+ * 不吃逐句覆蓋(座標系不同),呼叫端在那個情況不要傳 seg。
+ */
+export function resolveStyle(
+  project: SubStyle,
+  seg?: SegStyle | null,
+  marginVOverride?: number
+): EffectiveStyle {
+  return {
+    scale: seg?.scale ?? project.scale,
+    marginV: marginVOverride ?? seg?.y ?? project.margin_v,
+    x: seg?.x ?? 0.5,
+  };
+}
+
 export interface SubMetrics {
   /** CSS font-size(px);已經換算過 libass 的字身比例 */
   fontSize: number;
   /** 無單位行高,等於字型的 ascent+descent 比例 */
   lineHeight: number;
-  /** 左右留白(px) */
-  marginLR: number;
+  /** 文字框左緣距畫面左邊(px) */
+  left: number;
+  /** 文字框寬度(px) */
+  width: number;
   /** 距畫面底部(px) */
   bottom: number;
   /** 一行塞得下的全形字數 */
@@ -130,27 +158,30 @@ export interface SubMetrics {
 }
 
 /**
- * 樣式 → 預覽要用的像素值。frameW/H 是預覽的顯示尺寸,srcW/H 是輸出畫面尺寸
- * (一般模式=影片原始解析度,直式短片=CLIP_OUT)。
+ * 結算後的樣式 → 預覽要用的像素值。frameW/H 是預覽的顯示尺寸,srcW/H 是輸出
+ * 畫面尺寸(一般模式=影片原始解析度,直式短片=CLIP_OUT)。
  *
  * 先用輸出畫面的像素算一遍(含後端的四捨五入與下限),再等比縮到預覽大小。
  * 直接用顯示尺寸按比例算會漏掉那些整數化,一行剛好卡在邊界時預覽會比成品
  * 早一個字斷行——看起來只差一個字,但使用者就是照這個在對安全框。
  *
- * marginVRatio 給定時蓋過 style.margin_v(直式短片的距底由平台安全區決定)。
+ * 水平位移與 exporter._seg_layout 同一套:左右邊距不對稱,可用寬度跟著變窄。
  */
 export function subMetrics(
   frameW: number,
   frameH: number,
   srcW: number,
   srcH: number,
-  style: SubStyle,
-  marginVRatio?: number
+  eff: EffectiveStyle
 ): SubMetrics {
   const ref = Math.min(srcW, srcH);
-  const fs = Math.max(pyRound(ref * 0.055 * style.scale), 16);
-  const marginLR = Math.max(pyRound(srcW * 0.06), 20);
-  const marginV = Math.max(pyRound(srcH * (marginVRatio ?? style.margin_v)), 20);
+  const fs = Math.max(pyRound(ref * 0.055 * eff.scale), 16);
+  const base = Math.max(pyRound(srcW * 0.06), 20);
+  const dx = pyRound((eff.x - 0.5) * srcW);
+  const mL = base + Math.max(0, 2 * dx);
+  const mR = base + Math.max(0, -2 * dx);
+  const mV = Math.max(pyRound(srcH * eff.marginV), 20);
+  const usable = Math.max(srcW - mL - mR, fs);
   // 預覽與輸出的縮放比;兩者同長寬比,分開算只是為了不受 clientWidth 取整的影響
   const kx = frameW / srcW;
   const ky = frameH / srcH;
@@ -158,9 +189,10 @@ export function subMetrics(
   return {
     fontSize: (fs * ky) / ascDesc,
     lineHeight: ascDesc,
-    marginLR: marginLR * kx,
-    bottom: marginV * ky,
+    left: mL * kx,
+    width: usable * kx,
+    bottom: mV * ky,
     // 0.95 是粗體的保險係數,與 exporter.to_ass 一致
-    maxUnits: Math.max(((srcW - 2 * marginLR) / fs) * 0.95, 4),
+    maxUnits: Math.max((usable / fs) * 0.95, 4),
   };
 }

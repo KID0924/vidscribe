@@ -61,6 +61,7 @@ export function splitSegment(seg: Segment, pos: number): [Segment, Segment] | nu
     words: words.filter((w) => (w.start + w.end) / 2 < t),
   };
   const second: Segment = {
+    ...seg, // 樣式覆蓋要跟著兩半走,不然切一句就掉一半設定
     id: uid(),
     start: t,
     end: seg.end,
@@ -108,6 +109,7 @@ export function splitSegmentAtTime(seg: Segment, t: number): [Segment, Segment] 
   return [
     { ...seg, end: cut, text: text1, words: words.filter((w) => (w.start + w.end) / 2 < cut) },
     {
+      ...seg, // 同上:樣式覆蓋跟著兩半走
       id: uid(),
       start: cut,
       end: seg.end,

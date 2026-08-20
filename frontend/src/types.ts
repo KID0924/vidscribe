@@ -4,12 +4,49 @@ export interface Word {
   word: string;
 }
 
+/**
+ * 逐句字幕樣式覆蓋;沒給的欄位沿用專案的 SubStyle。
+ * 對齊後端 config.SEG_STYLE_RANGES。只作用在橫式燒錄成品——直式短片是裁過的
+ * 畫面,同一個 x 落點完全不同,所以短片一律用專案設定。
+ */
+export interface SegStyle {
+  /** 字級倍率 */
+  scale?: number;
+  /** 文字中心的水平位置(0..1),0.5 = 置中 */
+  x?: number;
+  /** 距畫面底部的比例 */
+  y?: number;
+}
+
+export const SEG_STYLE_RANGE: Record<keyof SegStyle, { min: number; max: number }> = {
+  scale: { min: 0.6, max: 2 },
+  x: { min: 0.2, max: 0.8 },
+  y: { min: 0, max: 0.9 },
+};
+
+/** 只留有效欄位並夾進範圍;全空回 null(呼叫端要把整個 style 欄位拿掉)。 */
+export function normalizeSegStyle(value?: SegStyle | null): SegStyle | null {
+  if (!value) return null;
+  const out: SegStyle = {};
+  for (const key of Object.keys(SEG_STYLE_RANGE) as (keyof SegStyle)[]) {
+    const raw = value[key];
+    if (raw === undefined || raw === null) continue;
+    const v = Number(raw);
+    if (!Number.isFinite(v)) continue;
+    const { min, max } = SEG_STYLE_RANGE[key];
+    out[key] = Math.round(Math.min(Math.max(v, min), max) * 10000) / 10000;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 export interface Segment {
   id: string;
   start: number;
   end: number;
   text: string;
   words?: Word[];
+  /** 這一句自己的字級/位置覆蓋;沒有就沿用專案設定 */
+  style?: SegStyle;
 }
 
 /** 辨識語言設定:中文、英文,或讓 Whisper 自動偵測 */

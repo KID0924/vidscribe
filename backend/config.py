@@ -51,6 +51,30 @@ def normalize_sub_style(value) -> dict:
     return style
 
 
+# 逐句覆蓋:沒給的欄位沿用專案設定。x 是文字中心的水平位置(0.5 = 置中),
+# y 是距底比例(等同專案的 margin_v)。x 往邊上移時可用寬度會變窄,夾住免得
+# 字被推出畫面;逐句覆蓋只作用在橫式成品,直式短片的座標系不同,不吃這些值。
+SEG_STYLE_RANGES = {"scale": (0.6, 2.0), "x": (0.2, 0.8), "y": (0.0, 0.9)}
+
+
+def normalize_seg_style(value) -> dict | None:
+    """逐句字幕樣式:只留有效欄位並夾進範圍,全空回 None(存檔時整個欄位拿掉)。"""
+    if not isinstance(value, dict):
+        return None
+    out = {}
+    for key, (lo, hi) in SEG_STYLE_RANGES.items():
+        if key not in value:
+            continue
+        try:
+            v = float(value[key])
+        except (TypeError, ValueError):
+            continue
+        if v != v:  # NaN
+            continue
+        out[key] = round(min(max(v, lo), hi), 4)
+    return out or None
+
+
 def effective_lang(meta: dict) -> str:
     """專案實際的內容語言,給 AI 功能挑提示詞用;auto 就採用 Whisper 偵測結果。"""
     lang = normalize_lang(meta.get("lang"))
