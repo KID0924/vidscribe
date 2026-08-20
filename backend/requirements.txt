@@ -5,3 +5,4 @@ faster-whisper>=1.1.0
 opencc-python-reimplemented>=0.1.7
 nvidia-cublas-cu12
 nvidia-cudnn-cu12
+opencv-python-headless>=4.10

@@ -11,8 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import (
-    burn, clip_export, clips, config, cuts, dictionary, exporter, llm,
-    storage, transcriber, waveform,
+    burn, clip_export, clips, config, cuts, dictionary, exporter, face_detect,
+    llm, storage, transcriber, waveform,
 )
 
 MEDIA_EXTS = {
@@ -74,6 +74,7 @@ def health():
     return {
         "ffmpeg": config.ffmpeg_available(),
         "claude": llm.find_claude() is not None,
+        "face": face_detect.available(),
     }
 
 
@@ -303,6 +304,18 @@ def cancel_clips(pid: str):
     _get_project_or_404(pid)
     clips.cancel(pid)
     return {"ok": True}
+
+
+@app.post("/api/projects/{pid}/clips/{cid}/layout")
+def set_clip_layout(pid: str, cid: str, body: dict = Body(...)):
+    _get_project_or_404(pid)
+    layout = body.get("layout")
+    if layout not in ("single", "stack"):
+        raise HTTPException(400, "layout 只能是 single 或 stack")
+    try:
+        return clips.set_layout(pid, cid, layout)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.post("/api/projects/{pid}/clips/export")

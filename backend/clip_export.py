@@ -15,7 +15,9 @@ import traceback
 from . import burn, clips, config, exporter, storage
 
 OUT_W, OUT_H = 1080, 1920
-MARGIN_V_RATIO = 0.24  # 字幕避開 Shorts/Reels 底部 22% UI 區
+TOP_H, BOT_H = 864, 1056  # 拼接版型:上臉 45% / 下內容 55%
+MARGIN_V_SINGLE = 0.24    # 單裁切:字幕避開 Shorts/Reels 底部 22% UI 區
+MARGIN_V_STACK = 0.53     # 拼接:字幕壓在拼接縫上(縫在底部 55% 處)
 ASS_NAME = "clip.ass"  # 單一佇列一次只跑一支,不會撞名
 
 # (影像編碼器,)由快到慢;音訊固定 aac
@@ -107,9 +109,37 @@ def start(pid: str, ids: list[str]) -> dict:
     return get_state(pid)
 
 
-def _build_vf(iw: int, ih: int, pan: float) -> str:
-    """置中裁 9:16;pan ∈ [-1,1] 對應最左~最右。來源比 9:16 窄就改裁高、忽略 pan。"""
-    frac = (max(-1.0, min(1.0, pan)) + 1) / 2
+def _even(x: float) -> int:
+    return max(2, int(x) // 2 * 2)
+
+
+def _build_vf(iw: int, ih: int, clip: dict) -> str:
+    """單裁切:置中裁 9:16(pan 調水平)。拼接:上臉下內容 vstack,字幕由 ASS 疊在縫上。"""
+    if clip.get("layout") == "stack" and iw * 16 > ih * 9:
+        top = clip.get("top") or {"cx": 0.5, "cy": 0.4, "h": 0.6}
+        bot = clip.get("content") or {"cx": 0.5, "cy": 0.5}
+        # 上半:比例 1080:TOP_H,裁切高由 top.h 決定(愈小愈放大)
+        th = min(float(top["h"]) * ih, ih)
+        tw = th * OUT_W / TOP_H
+        if tw > iw:
+            tw = iw
+            th = tw * TOP_H / OUT_W
+        tw, th = _even(tw), _even(th)
+        tx = _even(min(max(float(top["cx"]) * iw - tw / 2, 0), iw - tw))
+        ty = _even(min(max(float(top["cy"]) * ih - th / 2, 0), ih - th))
+        # 下半:比例 1080:BOT_H,盡量裁滿
+        bh = min(ih, iw * BOT_H / OUT_W)
+        bw = min(bh * OUT_W / BOT_H, iw)
+        bw, bh = _even(bw), _even(bh)
+        bx = _even(min(max(float(bot["cx"]) * iw - bw / 2, 0), iw - bw))
+        by = _even(min(max(float(bot["cy"]) * ih - bh / 2, 0), ih - bh))
+        return (
+            f"split=2[a][b];"
+            f"[a]crop={tw}:{th}:{tx}:{ty},scale={OUT_W}:{TOP_H}[t];"
+            f"[b]crop={bw}:{bh}:{bx}:{by},scale={OUT_W}:{BOT_H}[c];"
+            f"[t][c]vstack,setsar=1,ass={ASS_NAME}"
+        )
+    frac = (max(-1.0, min(1.0, float(clip.get("pan", 0.0)))) + 1) / 2
     if iw * 16 > ih * 9:  # 比 9:16 寬(一般橫式)
         crop = f"crop=w='2*floor(ih*9/32)':h=ih:x='(iw-ow)*{frac:.4f}':y=0"
     else:  # 已是直式或更窄:裁高置中
@@ -122,20 +152,33 @@ def _render_clip(pid: str, d, media_name: str, clip: dict, iw: int, ih: int, job
     dur = end - start
     segments = storage.load_subtitles(pid)["segments"]
     # -ss 在 -i 前會把 PTS 重定為 0,字幕時間同步平移 -start
-    rebased = [
-        {
-            "start": max(s["start"] - start, 0.0),
-            "end": min(s["end"], end) - start,
-            "text": s["text"],
-        }
-        for s in segments
-        if s["end"] > start and s["start"] < end
-    ]
+    rebased = []
+    for s in segments:
+        if s["end"] <= start or s["start"] >= end:
+            continue
+        # words 一併平移,卡拉OK才有逐字時間;夾進 [0, dur] 防負值
+        words = [
+            {
+                "start": round(min(max(float(w["start"]) - start, 0.0), dur), 3),
+                "end": round(min(max(float(w["end"]) - start, 0.0), dur), 3),
+                "word": w["word"],
+            }
+            for w in (s.get("words") or [])
+        ]
+        rebased.append(
+            {
+                "start": max(s["start"] - start, 0.0),
+                "end": min(s["end"], end) - start,
+                "text": s["text"],
+                "words": words,
+            }
+        )
+    margin = MARGIN_V_STACK if clip.get("layout") == "stack" else MARGIN_V_SINGLE
     (d / ASS_NAME).write_text(
-        exporter.to_ass(rebased, OUT_W, OUT_H, margin_v_ratio=MARGIN_V_RATIO),
+        exporter.to_ass(rebased, OUT_W, OUT_H, margin_v_ratio=margin, karaoke=True),
         encoding="utf-8",
     )
-    vf = _build_vf(iw, ih, float(clip.get("pan", 0.0)))
+    vf = _build_vf(iw, ih, clip)
     # 先寫 .part,成功才轉正:伺服器中途被殺不會留下看似可下載的半成品
     out_final = f"clips/{clip['id']}.mp4"
     out_part = out_final + ".part"
@@ -221,7 +264,7 @@ def _run(pid: str, media_name: str, job: dict) -> None:
                 break
             # 渲染期間被編輯過就作廢重排,保證成品永遠對得上目前的參數
             latest = next((c for c in clips.load_clips(pid) if c["id"] == cid), None)
-            if latest is None or any(latest[k] != clip[k] for k in ("start", "end", "pan")):
+            if latest is None or any(latest.get(k) != clip.get(k) for k in clips.RENDER_KEYS):
                 storage.discard_file(out_dir / f"{cid}.mp4")
                 if latest is not None:
                     with _lock:

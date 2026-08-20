@@ -75,7 +75,42 @@ def _wrap_line(text: str, max_units: float) -> str:
     return "\n".join(out)
 
 
-def to_ass(segments: list[dict], width: int, height: int, margin_v_ratio: float = 0.09) -> str:
+def _char_units(text: str) -> float:
+    return sum(1.0 if ord(ch) >= 0x2E80 else 0.5 for ch in text)
+
+
+def _karaoke_text(seg: dict, max_units: float) -> str | None:
+    """逐字卡拉OK標籤(kf 平滑掃色)。words 與句子文字對不上(編輯過)回 None 退回一般字幕。"""
+    words = seg.get("words") or []
+    if not words:
+        return None
+    if "".join(w["word"] for w in words).strip() != seg["text"].strip():
+        return None
+    parts: list[str] = []
+    cursor = float(seg["start"])
+    units = 0.0
+    for w in words:
+        gap = float(w["start"]) - cursor
+        if gap > 0.01:
+            parts.append(f"{{\\k{round(gap * 100)}}}")  # 字間停頓:零寬標籤推進時間
+        wu = _char_units(w["word"])
+        if units and units + wu > max_units:
+            parts.append("\\N")  # 逐 word 斷行,卡拉OK不走 _wrap_line
+            units = 0.0
+        dur = max(round((float(w["end"]) - float(w["start"])) * 100), 1)
+        parts.append(f"{{\\kf{dur}}}{_ass_escape(w['word'])}")
+        units += wu
+        cursor = float(w["end"])
+    return "".join(parts)
+
+
+def to_ass(
+    segments: list[dict],
+    width: int,
+    height: int,
+    margin_v_ratio: float = 0.09,
+    karaoke: bool = False,
+) -> str:
     """燒錄用 ASS 字幕:粗正黑、白字黑邊、置底置中,大小按解析度縮放。
 
     margin_v_ratio:字幕距底比例。直式短片要避開 Shorts/Reels 底部 UI 區,傳 0.24。
@@ -89,6 +124,8 @@ def to_ass(segments: list[dict], width: int, height: int, margin_v_ratio: float 
     margin_lr = max(round(width * 0.06), 20)
     # 一行塞得下的全形字數(0.95 是粗體的保險係數)
     max_units = max((width - 2 * margin_lr) / fs * 0.95, 4.0)
+    # 卡拉OK:PrimaryColour=唸到掃過的顏色(品牌綠 #38d321),SecondaryColour=還沒唸到(白)
+    primary = "&H0021D338" if karaoke else "&H00FFFFFF"
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -101,18 +138,22 @@ def to_ass(segments: list[dict], width: int, height: int, margin_v_ratio: float 
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,Microsoft JhengHei,{fs},&H00FFFFFF,&H00FFFFFF,"
+        f"Style: Default,Microsoft JhengHei,{fs},{primary},&H00FFFFFF,"
         f"&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,{outline},{shadow},"
         f"2,{margin_lr},{margin_lr},{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
-    events = [
-        f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},Default,,0,0,0,,"
-        f"{_ass_escape(_wrap_line(s['text'], max_units))}"
-        for s in segments
-        if s["text"].strip()
-    ]
+    events = []
+    for s in segments:
+        if not s["text"].strip():
+            continue
+        text = _karaoke_text(s, max_units) if karaoke else None
+        if text is None:
+            text = _ass_escape(_wrap_line(s["text"], max_units))
+        events.append(
+            f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},Default,,0,0,0,,{text}"
+        )
     return header + "\n".join(events) + "\n"
 
 

@@ -80,6 +80,9 @@ PROMPT = f"""你是短影音選題剪輯師。最後面附上一支長影片的�
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 
+# 這些欄位任一有變,已匯出的成品就過期(update_clips 與 clip_export 的過期檢查共用)
+RENDER_KEYS = ("start", "end", "pan", "layout", "top", "content")
+
 
 def clips_file(pid: str) -> Path:
     return storage.project_dir(pid) / "clips.json"
@@ -168,12 +171,20 @@ def update_clips(pid: str, clips: list[dict]) -> list[dict]:
             # 數值不合理(含 JSON 偷渡的 NaN/Infinity)一律退回原值
             item["start"], item["end"] = prev["start"], prev["end"]
             item["pan"] = prev.get("pan", 0.0)
+        # 拼接版型欄位:layout / top(上半裁切)/ content(下半裁切)
+        layout = c.get("layout", prev.get("layout"))
+        item["layout"] = layout if layout in ("single", "stack") else prev.get("layout", "single")
+        item["top"] = _clean_region(c.get("top"), prev.get("top"), with_h=True)
+        item["content"] = _clean_region(c.get("content"), prev.get("content"), with_h=False)
+        for k in ("layout", "top", "content"):
+            if item.get(k) is None:
+                item.pop(k, None)
         cleaned.append(item)
 
     kept_ids = set()
     for c in cleaned:
         prev = old[c["id"]]
-        changed = any(c[k] != prev.get(k) for k in ("start", "end", "pan"))
+        changed = any(c.get(k) != prev.get(k) for k in RENDER_KEYS)
         if not changed:
             kept_ids.add(c["id"])
     for cid in old:
@@ -183,6 +194,60 @@ def update_clips(pid: str, clips: list[dict]) -> list[dict]:
 
     save_clips(pid, cleaned)
     return cleaned
+
+
+def _clean_region(value, prev, with_h: bool):
+    """裁切區欄位消毒:cx/cy 夾在 0..1、h(上半裁切高)夾在 0.2..1;壞值退回 prev。"""
+    if value is None:
+        return prev
+    if not isinstance(value, dict):
+        return prev
+    try:
+        out = {
+            "cx": round(min(max(float(value.get("cx", 0.5)), 0.0), 1.0), 4),
+            "cy": round(min(max(float(value.get("cy", 0.5)), 0.0), 1.0), 4),
+        }
+        if with_h:
+            out["h"] = round(min(max(float(value.get("h", 0.5)), 0.2), 1.0), 4)
+        if not all(math.isfinite(v) for v in out.values()):
+            return prev
+        return out
+    except (TypeError, ValueError):
+        return prev
+
+
+def set_layout(pid: str, cid: str, layout: str) -> dict:
+    """切換單裁切/拼接。切拼接且還沒有裁切參數時才跑人臉偵測(有快取就直接用)。"""
+    from . import face_detect  # 延後匯入:沒裝 opencv 也不影響其他功能
+
+    items = load_clips(pid)
+    clip = next((c for c in items if c["id"] == cid), None)
+    if clip is None:
+        raise RuntimeError("找不到指定的短片")
+    if layout == "stack":
+        meta = storage.load_project(pid) or {}
+        if not meta.get("has_video"):
+            raise RuntimeError("純音訊檔沒有畫面")
+        if "top" not in clip:
+            face = face_detect.detect(pid, clip["start"], clip["end"])
+            if face is None:
+                raise RuntimeError("這段偵測不到人臉,維持單裁切")
+            # 臉高×2.6 當上半部裁切高(中景),臉中心放在面板 42% 高度(頭頂留白)
+            crop_h = min(max(face["h"] * 2.6, 0.25), 1.0)
+            clip["top"] = {
+                "cx": round(face["cx"], 4),
+                "cy": round(min(max(face["cy"] + crop_h * 0.08, 0.0), 1.0), 4),
+                "h": round(crop_h, 4),
+            }
+            clip.setdefault("content", {"cx": 0.5, "cy": 0.5})
+        clip["layout"] = "stack"
+    elif layout == "single":
+        clip["layout"] = "single"
+    else:
+        raise RuntimeError("layout 只能是 single 或 stack")
+    storage.discard_file(clips_dir(pid) / f"{cid}.mp4")  # 版型變了,舊成品作廢
+    save_clips(pid, items)
+    return clip
 
 
 def start(pid: str) -> dict:
