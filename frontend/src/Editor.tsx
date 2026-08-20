@@ -21,10 +21,14 @@ import {
 import { diffParts } from "./diff";
 import ClipsPanel from "./ClipsPanel";
 import SafeFrame, { SAFE_FRAMES, SafeZoneOverlay, matchPresetByRatio } from "./SafeFrame";
+import SubtitleOverlay from "./SubtitleOverlay";
 import {
   LANG_OPTIONS,
   RUNNING_STATUSES,
+  SUB_STYLE_DEFAULT,
+  SUB_STYLE_RANGE,
   langLabel,
+  normalizeSubStyle,
   statusLabel,
   type BurnJob,
   type Clip,
@@ -36,6 +40,7 @@ import {
   type Lang,
   type Project,
   type Segment,
+  type SubStyle,
 } from "./types";
 import Waveform from "./Waveform";
 
@@ -150,12 +155,18 @@ export default function Editor({ projectId }: { projectId: string }) {
   const previewClip = previewClipId
     ? clips.find((c) => c.id === previewClipId) ?? null
     : null;
+  const isStackPreview = previewClip?.layout === "stack";
 
   const [dictOpen, setDictOpen] = useState(false);
   const [dictEntries, setDictEntries] = useState<DictEntry[]>([]);
   const [dictWrong, setDictWrong] = useState("");
   const [dictRight, setDictRight] = useState("");
   const [dictMsg, setDictMsg] = useState("");
+
+  const [subStyle, setSubStyle] = useState<SubStyle>(SUB_STYLE_DEFAULT);
+  const subStyleRef = useRef(subStyle);
+  subStyleRef.current = subStyle;
+  const subStyleTimer = useRef<number | undefined>(undefined);
 
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -206,6 +217,7 @@ export default function Editor({ projectId }: { projectId: string }) {
       .then((p) => {
         if (!alive) return;
         setProject(p);
+        setSubStyle(normalizeSubStyle(p.sub_style));
         if (p.status === "done") loadSubtitles();
       })
       .catch((e: Error) => setLoadError(e.message));
@@ -396,6 +408,35 @@ export default function Editor({ projectId }: { projectId: string }) {
     saveTimer.current = window.setTimeout(doSave, 800);
     return () => window.clearTimeout(saveTimer.current);
   }, [marks, doSave]);
+
+  // 還在等 debounce 的樣式先送出去,匯出才會照著預覽跑
+  const flushSubStyle = useCallback(() => {
+    if (subStyleTimer.current === undefined) return Promise.resolve();
+    window.clearTimeout(subStyleTimer.current);
+    subStyleTimer.current = undefined;
+    return api.updateSubStyle(projectId, subStyleRef.current).then(() => undefined);
+  }, [projectId]);
+
+  // 字幕樣式:拖滑桿會連續觸發,延遲送出;離開頁面前把還沒送的沖掉
+  const changeSubStyle = useCallback(
+    (patch: Partial<SubStyle>) => {
+      const next = normalizeSubStyle({ ...subStyleRef.current, ...patch });
+      setSubStyle(next);
+      window.clearTimeout(subStyleTimer.current);
+      subStyleTimer.current = window.setTimeout(() => {
+        subStyleTimer.current = undefined;
+        api.updateSubStyle(projectId, next).catch(() => {});
+      }, 400);
+    },
+    [projectId]
+  );
+
+  useEffect(
+    () => () => {
+      flushSubStyle().catch(() => {});
+    },
+    [flushSubStyle]
+  );
 
   // 切點:載入既有結果;偵測中每 2 秒輪詢
   useEffect(() => {
@@ -863,17 +904,19 @@ export default function Editor({ projectId }: { projectId: string }) {
   // ---- 成品影片匯出 ----
 
   const startBurn = useCallback(() => {
-    // 先把未存的編輯沖掉,燒錄才會拿到最新字幕
+    // 先把未存的編輯與字幕樣式沖掉,燒錄才會拿到最新字幕、照著預覽的大小位置跑
     window.clearTimeout(saveTimer.current);
-    api
-      .saveSubtitles(projectId, segmentsRef.current, marksRef.current)
+    Promise.all([
+      api.saveSubtitles(projectId, segmentsRef.current, marksRef.current),
+      flushSubStyle(),
+    ])
       .then(() => {
         setSaveState("saved");
         return api.startBurn(projectId);
       })
       .then(setBurnJob)
       .catch((e: Error) => alert(e.message));
-  }, [projectId]);
+  }, [projectId, flushSubStyle]);
 
   const cancelBurn = useCallback(() => {
     api.cancelBurn(projectId).catch(() => {});
@@ -1022,10 +1065,12 @@ export default function Editor({ projectId }: { projectId: string }) {
   const startClipExport = useCallback(
     (ids: string[]) => {
       if (!ids.length) return;
-      // 先把未存的編輯沖掉,匯出才會拿到最新字幕(同燒錄)
+      // 先把未存的編輯與字幕樣式沖掉,匯出才會拿到最新字幕(同燒錄)
       window.clearTimeout(saveTimer.current);
-      api
-        .saveSubtitles(projectId, segmentsRef.current, marksRef.current)
+      Promise.all([
+        api.saveSubtitles(projectId, segmentsRef.current, marksRef.current),
+        flushSubStyle(),
+      ])
         .then(() => {
           setSaveState("saved");
           return api.startClipExport(projectId, ids);
@@ -1033,7 +1078,7 @@ export default function Editor({ projectId }: { projectId: string }) {
         .then(setClipExport)
         .catch((e: Error) => alert(e.message));
     },
-    [projectId]
+    [projectId, flushSubStyle]
   );
 
   const cancelClipExport = useCallback(() => {
@@ -1291,7 +1336,6 @@ export default function Editor({ projectId }: { projectId: string }) {
   }
 
   const activeSeg = activeIdx >= 0 ? segments[activeIdx] : null;
-  const isStackPreview = previewClip?.layout === "stack";
   const karaokeWordsActive = activeSeg ? usableWords(activeSeg) : null;
 
   return (
@@ -1485,15 +1529,14 @@ export default function Editor({ projectId }: { projectId: string }) {
               <SafeFrame videoRef={videoRef} frameKey={safeFrame} />
             )}
             {activeSeg && (
-              <div className="subtitle-overlay">
-                {previewClip && karaokeWordsActive
-                  ? karaokeWordsActive.map((w, i) => (
-                      <span key={i} className={currentTime >= w.start ? "k-on" : undefined}>
-                        {w.word}
-                      </span>
-                    ))
-                  : activeSeg.text}
-              </div>
+              <SubtitleOverlay
+                videoRef={videoRef}
+                seg={activeSeg}
+                words={previewClip ? karaokeWordsActive : null}
+                currentTime={currentTime}
+                style={subStyle}
+                clipLayout={previewClip ? (isStackPreview ? "stack" : "single") : null}
+              />
             )}
             {previewClip && !isStackPreview && (
               <div
@@ -1539,6 +1582,7 @@ export default function Editor({ projectId }: { projectId: string }) {
               <button className="btn small" onClick={exitPreview}>
                 離開直式預覽
               </button>
+              <SubStyleMenu style={subStyle} onChange={changeSubStyle} clipMode />
               <span className="hint">
                 {isStackPreview
                   ? "上下兩區各自拖曳調整取景、右上 +/− 縮放臉部;構圖會存起來,匯出照預覽"
@@ -1565,6 +1609,7 @@ export default function Editor({ projectId }: { projectId: string }) {
                   </option>
                 ))}
               </select>
+              <SubStyleMenu style={subStyle} onChange={changeSubStyle} clipMode={false} />
               <span className="hint">紅色斜紋是平台 UI 會遮住的區域,字幕壓到就該換行</span>
             </div>
           )}
@@ -1891,6 +1936,69 @@ export default function Editor({ projectId }: { projectId: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * 字幕樣式選單:字級倍率與距底比例。只影響燒錄成品與短片,SRT/VTT 不受影響。
+ * clipMode(直式預覽)時距底由平台安全區決定,只留字級可調。
+ */
+function SubStyleMenu({
+  style,
+  onChange,
+  clipMode,
+}: {
+  style: SubStyle;
+  onChange: (patch: Partial<SubStyle>) => void;
+  clipMode: boolean;
+}) {
+  const isDefault =
+    style.scale === SUB_STYLE_DEFAULT.scale && style.margin_v === SUB_STYLE_DEFAULT.margin_v;
+  return (
+    <details className="export-menu sub-style-menu">
+      <summary className="btn small" title="調整燒錄字幕的大小與位置">
+        字幕樣式
+        {!isDefault && <span className="sub-style-dot" aria-label="已調整" />}
+      </summary>
+      <div className="export-items sub-style-panel">
+        <label className="sub-style-row">
+          <span>字級</span>
+          <input
+            type="range"
+            min={SUB_STYLE_RANGE.scale.min}
+            max={SUB_STYLE_RANGE.scale.max}
+            step={SUB_STYLE_RANGE.scale.step}
+            value={style.scale}
+            onChange={(e) => onChange({ scale: Number(e.target.value) })}
+          />
+          <em>{Math.round(style.scale * 100)}%</em>
+        </label>
+        {clipMode ? (
+          <p className="sub-style-note">直式短片的距底固定避開平台 UI,不吃這裡的設定。</p>
+        ) : (
+          <label className="sub-style-row">
+            <span>距底</span>
+            <input
+              type="range"
+              min={SUB_STYLE_RANGE.margin_v.min}
+              max={SUB_STYLE_RANGE.margin_v.max}
+              step={SUB_STYLE_RANGE.margin_v.step}
+              value={style.margin_v}
+              onChange={(e) => onChange({ margin_v: Number(e.target.value) })}
+            />
+            <em>{Math.round(style.margin_v * 100)}%</em>
+          </label>
+        )}
+        <button
+          className="sub-style-reset"
+          disabled={isDefault}
+          onClick={() => onChange(SUB_STYLE_DEFAULT)}
+        >
+          回到預設
+        </button>
+        <p className="sub-style-note">只影響燒錄成品與短片,匯出的字幕檔不受影響。</p>
+      </div>
+    </details>
   );
 }
 

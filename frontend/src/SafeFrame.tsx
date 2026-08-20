@@ -91,21 +91,28 @@ export function SafeZoneOverlay({ frameKey }: { frameKey: string }) {
   );
 }
 
-/** 疊在影片實際內容區上(自動扣掉上下/左右黑邊)。 */
-export default function SafeFrame({
-  videoRef,
-  frameKey,
-}: {
-  videoRef: React.RefObject<HTMLVideoElement>;
-  frameKey: string;
-}) {
-  const [rect, setRect] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  const preset = SAFE_FRAMES.find((p) => p.key === frameKey);
+export interface VideoRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  /** 影片原始解析度;字幕預覽要按輸出像素算幾何 */
+  srcW: number;
+  srcH: number;
+}
+
+/**
+ * 影片實際畫面在 .video-wrap 裡的位置與尺寸(自動扣掉上下/左右黑邊)。
+ * 安全框與字幕預覽共用,兩者才會疊在同一個畫面上。
+ *
+ * cover=true 用於直式預覽:那裡的 video 是 object-fit: cover 鋪滿容器,
+ * 沒有黑邊,輸出畫面就是整個容器。
+ */
+export function useVideoRect(
+  videoRef: React.RefObject<HTMLVideoElement | null>,
+  cover = false
+): VideoRect | null {
+  const [rect, setRect] = useState<VideoRect | null>(null);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -115,8 +122,12 @@ export default function SafeFrame({
       const H = v.clientHeight;
       const vw = v.videoWidth;
       const vh = v.videoHeight;
-      if (!W || !H || !vw || !vh) {
+      if (!W || !H || (!cover && (!vw || !vh))) {
         setRect(null);
+        return;
+      }
+      if (cover) {
+        setRect({ left: 0, top: 0, width: W, height: H, srcW: vw, srcH: vh });
         return;
       }
       const a = vw / vh;
@@ -132,7 +143,7 @@ export default function SafeFrame({
         h = W / a;
         top = (H - h) / 2;
       }
-      setRect({ left, top, width: w, height: h });
+      setRect({ left, top, width: w, height: h, srcW: vw, srcH: vh });
     };
     update();
     const ro = new ResizeObserver(update);
@@ -142,7 +153,21 @@ export default function SafeFrame({
       ro.disconnect();
       v.removeEventListener("loadedmetadata", update);
     };
-  }, [videoRef, frameKey]);
+  }, [videoRef, cover]);
+
+  return rect;
+}
+
+/** 疊在影片實際內容區上(自動扣掉上下/左右黑邊)。 */
+export default function SafeFrame({
+  videoRef,
+  frameKey,
+}: {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  frameKey: string;
+}) {
+  const rect = useVideoRect(videoRef);
+  const preset = SAFE_FRAMES.find((p) => p.key === frameKey);
 
   if (!preset || !preset.ratio || !rect) return null;
   return (

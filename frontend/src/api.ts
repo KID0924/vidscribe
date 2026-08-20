@@ -1,5 +1,5 @@
 import type {
-  BurnJob, Clip, ClipExportJob, ClipsJob, DictEntry, FixJob, Lang, Project, Segment,
+  BurnJob, Clip, ClipExportJob, ClipsJob, DictEntry, FixJob, Lang, Project, Segment, SubStyle,
 } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
@@ -27,6 +27,14 @@ export const api = {
 
   deleteProject: (id: string) =>
     fetch(`/api/projects/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
+
+  /** 存燒錄字幕樣式(大小/位置);只影響燒錄成品與短片,字幕檔不受影響。 */
+  updateSubStyle: (id: string, sub_style: SubStyle) =>
+    fetch(`/api/projects/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sub_style }),
+    }).then((r) => json<Project>(r)),
 
   /** lang 給定時順便換辨識語言(選錯語言時重跑用)。 */
   retranscribe: (id: string, lang?: Lang) =>

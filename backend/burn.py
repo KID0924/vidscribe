@@ -83,7 +83,14 @@ def start(pid: str) -> dict:
             raise RuntimeError("匯出已在進行中")
 
     width, height = _probe_size(media)
-    (d / "burn.ass").write_text(exporter.to_ass(segments, width, height), encoding="utf-8")
+    style = config.normalize_sub_style(meta.get("sub_style"))
+    (d / "burn.ass").write_text(
+        exporter.to_ass(
+            segments, width, height,
+            margin_v_ratio=style["margin_v"], scale=style["scale"],
+        ),
+        encoding="utf-8",
+    )
 
     job = {"status": "running", "progress": 0.0, "error": None, "cancel": False, "proc": None}
     with _lock:

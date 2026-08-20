@@ -130,16 +130,19 @@ def to_ass(
     height: int,
     margin_v_ratio: float = 0.09,
     karaoke: bool = False,
+    scale: float = 1.0,
 ) -> str:
     """燒錄用 ASS 字幕:粗正黑、白字黑邊、置底置中,大小按解析度縮放。
 
     margin_v_ratio:字幕距底比例。直式短片要避開 Shorts/Reels 底部 UI 區,傳 0.24。
+    scale:專案設定的字級倍率,1.0 = 原本的短邊 5.5%。描邊跟著一起縮放,
+    比例才不會在放大時看起來太細;字放大後一行塞得下的字數(max_units)也自動變少。
     """
     # 字級按短邊算:橫式=高(行為不變),直式=寬(按高算 9:16 會一行塞不到十個字)
     ref = min(width, height)
-    fs = max(round(ref * 0.055), 16)
-    outline = max(round(ref * 0.004), 2)
-    shadow = max(round(ref * 0.002), 1)
+    fs = max(round(ref * 0.055 * scale), 16)
+    outline = max(round(ref * 0.004 * scale), 2)
+    shadow = max(round(ref * 0.002 * scale), 1)
     margin_v = max(round(height * margin_v_ratio), 20)
     margin_lr = max(round(width * 0.06), 20)
     # 一行塞得下的全形字數(0.95 是粗體的保險係數)

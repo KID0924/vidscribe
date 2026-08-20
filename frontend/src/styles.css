@@ -618,20 +618,30 @@ button {
   box-shadow: 0 0 0 3px var(--green-soft);
 }
 
-/* 簽名元素:影片上即時顯示目前那句,長得就像真的字幕 */
+/* 簽名元素:影片上即時顯示目前那句,長得就像真的字幕。
+   位置與字級由 subStyle.ts 依影片畫框算出(跟燒錄的 to_ass 同一套比例),
+   這裡只負責長相;陰影用 em 才會跟著字級一起放大。 */
 .subtitle-overlay {
   z-index: 6;
   position: absolute;
-  left: 6%;
-  right: 6%;
-  bottom: 14%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.subtitle-text {
+  /* 對齊燒錄用的 Microsoft JhengHei;字級與行高由 subStyle.ts 換算後給 */
+  font-family: "Microsoft JhengHei", "微軟正黑體", var(--sans);
+  font-weight: 700;
   text-align: center;
   color: #fff;
-  font-size: clamp(14px, 1.6vw, 21px);
-  font-weight: 700;
-  line-height: 1.45;
-  text-shadow: 0 0 4px #000, 0 2px 3px #000, 0 0 10px rgba(0, 0, 0, 0.85);
-  pointer-events: none;
+  white-space: pre-wrap;
+  text-shadow: 0 0 0.22em #000, 0 0.11em 0.17em #000, 0 0 0.55em rgba(0, 0, 0, 0.85);
+}
+
+.subtitle-text .k-line {
+  display: block;
 }
 
 /* ---- 字幕列表 ---- */
@@ -1439,10 +1449,6 @@ a.btn {
 }
 
 /* 對齊燒錄用的 margin_v_ratio = 0.24 */
-.video-wrap.vert-preview .subtitle-overlay {
-  bottom: 24%;
-}
-
 .pan-drag-layer {
   position: absolute;
   left: 0;
@@ -1525,14 +1531,90 @@ a.btn {
   cursor: pointer;
 }
 
-/* 拼接版:字幕壓在縫上(對齊燒錄的 MARGIN_V_STACK=0.53) */
-.video-wrap.vert-preview.stack .subtitle-overlay {
-  bottom: 53%;
-}
-
 /* 卡拉OK預覽:唸到的字上品牌綠(匯出才有平滑掃過) */
 .subtitle-overlay .k-on {
   color: var(--green);
+}
+
+/* ---- 字幕樣式選單 ---- */
+
+/* 控制列在左邊,選單要往右展開才不會頂出面板外 */
+.sub-style-menu .export-items {
+  left: 0;
+  right: auto;
+}
+
+.sub-style-panel {
+  min-width: 232px;
+  padding: 10px 12px;
+}
+
+.sub-style-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 5px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.sub-style-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.sub-style-row span {
+  min-width: 28px;
+}
+
+.sub-style-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--green);
+}
+
+.sub-style-row em {
+  min-width: 38px;
+  text-align: right;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* 要壓過 .export-items button 的通用樣式,選擇器得跟它一樣重 */
+.sub-style-panel .sub-style-reset {
+  margin-top: 8px;
+  width: 100%;
+  text-align: center;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.sub-style-panel .sub-style-reset:hover:not(:disabled) {
+  background: var(--green-softer);
+}
+
+.sub-style-panel .sub-style-reset:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.sub-style-note {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: normal;
 }
 
 /* ---- 響應式 ---- */

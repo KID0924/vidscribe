@@ -66,6 +66,7 @@ def create_project(display_name: str, media_suffix: str, lang: str | None = None
         "duration": None,
         "lang": config.normalize_lang(lang),  # 使用者選的辨識語言
         "language": None,                     # Whisper 實際偵測到的語言
+        "sub_style": dict(config.SUB_STYLE_DEFAULT),  # 燒錄字幕樣式(大小/位置)
         "has_video": None,
         "model": config.MODEL_NAME,
         "device": None,

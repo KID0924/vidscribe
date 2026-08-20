@@ -25,6 +25,34 @@ export function langLabel(lang?: string | null): string {
   return LANG_OPTIONS.find((o) => o.value === lang)?.label ?? "中文";
 }
 
+/** 燒錄字幕樣式(專案層級);對齊後端 config.SUB_STYLE_DEFAULT / SUB_STYLE_RANGES */
+export interface SubStyle {
+  /** 字級倍率,1.0 = 畫面短邊的 5.5% */
+  scale: number;
+  /** 字幕距底比例(佔畫面高) */
+  margin_v: number;
+}
+
+export const SUB_STYLE_DEFAULT: SubStyle = { scale: 1, margin_v: 0.09 };
+
+export const SUB_STYLE_RANGE: Record<keyof SubStyle, { min: number; max: number; step: number }> = {
+  scale: { min: 0.6, max: 2, step: 0.05 },
+  margin_v: { min: 0, max: 0.45, step: 0.01 },
+};
+
+/** 舊專案沒有 sub_style 欄位,讀進來時補預設並夾進合法範圍。 */
+export function normalizeSubStyle(value?: Partial<SubStyle> | null): SubStyle {
+  const out = { ...SUB_STYLE_DEFAULT };
+  for (const key of Object.keys(SUB_STYLE_RANGE) as (keyof SubStyle)[]) {
+    const v = Number(value?.[key]);
+    if (Number.isFinite(v)) {
+      const { min, max } = SUB_STYLE_RANGE[key];
+      out[key] = Math.round(Math.min(Math.max(v, min), max) * 1000) / 1000;
+    }
+  }
+  return out;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -46,6 +74,8 @@ export interface Project {
   lang?: Lang;
   /** Whisper 實際偵測到的語言 */
   language: string | null;
+  /** 燒錄字幕樣式;舊專案可能沒有,用 normalizeSubStyle 補 */
+  sub_style?: SubStyle;
   has_video: boolean | null;
   model: string;
   device: string | null;

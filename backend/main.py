@@ -107,12 +107,16 @@ def get_project(pid: str):
 
 
 @app.patch("/api/projects/{pid}")
-def rename_project(pid: str, body: dict = Body(...)):
+def update_project(pid: str, body: dict = Body(...)):
+    """局部更新:目前支援改名與字幕樣式,body 裡沒出現的欄位一律不動。"""
     meta = _get_project_or_404(pid)
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise HTTPException(400, "名稱不可為空")
-    meta["name"] = name
+    if "name" in body:
+        name = (body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(400, "名稱不可為空")
+        meta["name"] = name
+    if "sub_style" in body:
+        meta["sub_style"] = config.normalize_sub_style(body.get("sub_style"))
     storage.save_project(meta)
     return meta
 

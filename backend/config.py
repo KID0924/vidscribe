@@ -29,6 +29,28 @@ def normalize_lang(value) -> str:
     return value if value in LANGUAGES else LANGUAGE
 
 
+# 燒錄字幕的樣式,每個專案各自存;預設值就是原本寫死的行為
+# scale:字級倍率(1.0 = 畫面短邊的 5.5%);margin_v:字幕距底比例(佔畫面高)
+SUB_STYLE_DEFAULT = {"scale": 1.0, "margin_v": 0.09}
+# 前端滑桿要用同一組範圍(見 frontend/src/types.ts 的 SUB_STYLE_RANGE)
+SUB_STYLE_RANGES = {"scale": (0.6, 2.0), "margin_v": (0.0, 0.45)}
+
+
+def normalize_sub_style(value) -> dict:
+    """把外部傳進來的字幕樣式夾進合法範圍;缺欄位、型別不對、NaN 都退回預設。"""
+    style = dict(SUB_STYLE_DEFAULT)
+    if isinstance(value, dict):
+        for key, (lo, hi) in SUB_STYLE_RANGES.items():
+            try:
+                v = float(value[key])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if v != v:  # NaN 比較永遠 False,min/max 夾不住,要自己擋
+                continue
+            style[key] = round(min(max(v, lo), hi), 3)
+    return style
+
+
 def effective_lang(meta: dict) -> str:
     """專案實際的內容語言,給 AI 功能挑提示詞用;auto 就採用 Whisper 偵測結果。"""
     lang = normalize_lang(meta.get("lang"))

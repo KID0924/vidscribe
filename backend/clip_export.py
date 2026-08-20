@@ -16,6 +16,7 @@ from . import burn, clips, config, exporter, storage
 
 OUT_W, OUT_H = 1080, 1920
 TOP_H, BOT_H = 864, 1056  # 拼接版型:上臉 45% / 下內容 55%
+# 這兩個比例前端預覽也要用,改的話同步 frontend/src/subStyle.ts 的 CLIP_MARGIN_V
 MARGIN_V_SINGLE = 0.24    # 單裁切:字幕避開 Shorts/Reels 底部 22% UI 區
 MARGIN_V_STACK = 0.53     # 拼接:字幕壓在拼接縫上(縫在底部 55% 處)
 ASS_NAME = "clip.ass"  # 單一佇列一次只跑一支,不會撞名
@@ -174,8 +175,14 @@ def _render_clip(pid: str, d, media_name: str, clip: dict, iw: int, ih: int, job
             }
         )
     margin = MARGIN_V_STACK if clip.get("layout") == "stack" else MARGIN_V_SINGLE
+    # 字級倍率是使用者的個人偏好,橫式成品與直式短片一致;距底比例則由平台
+    # UI 安全區決定(上面兩個常數),不吃專案設定,不然字幕會被 Shorts UI 蓋掉。
+    style = config.normalize_sub_style((storage.load_project(pid) or {}).get("sub_style"))
     (d / ASS_NAME).write_text(
-        exporter.to_ass(rebased, OUT_W, OUT_H, margin_v_ratio=margin, karaoke=True),
+        exporter.to_ass(
+            rebased, OUT_W, OUT_H,
+            margin_v_ratio=margin, karaoke=True, scale=style["scale"],
+        ),
         encoding="utf-8",
     )
     vf = _build_vf(iw, ih, clip)
