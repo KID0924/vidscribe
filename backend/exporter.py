@@ -220,6 +220,11 @@ def to_ass(
         text = _karaoke_text(s, s_units) if karaoke else None
         if text is None:
             text = _ass_escape(_wrap_line(s["text"], s_units))
+            if karaoke:
+                # 卡拉OK的 PrimaryColour 是「唸過了」的綠。這行沒有 \k 標籤
+                # (words 與文字對不上),不把顏色蓋回白的話會整句都是綠的,
+                # 跟預覽(白)剛好相反。
+                text = "{\\1c&HFFFFFF&}" + text
         events.append(
             f"Dialogue: 0,{_ass_time(s['start'])},{_ass_time(s['end'])},"
             f"Default,,{margins},,{tags}{text}"

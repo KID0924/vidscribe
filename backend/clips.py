@@ -180,7 +180,9 @@ def update_clips(pid: str, clips: list[dict]) -> list[dict]:
             item["pan"] = prev.get("pan", 0.0)
         # 拼接版型欄位:layout / top(上半裁切)/ content(下半裁切)
         layout = c.get("layout", prev.get("layout"))
-        item["layout"] = layout if layout in ("single", "stack") else prev.get("layout", "single")
+        # 沒有 layout 的舊資料就讓它保持沒有(_build_vf 把「沒有」當單裁切)。
+        # 硬塞 "single" 會讓下面的過期比對認定每支都改過,把已匯出的短片全刪掉。
+        item["layout"] = layout if layout in ("single", "stack") else prev.get("layout")
         item["top"] = _clean_region(c.get("top"), prev.get("top"), with_h=True)
         item["content"] = _clean_region(c.get("content"), prev.get("content"), with_h=False)
         for k in ("layout", "top", "content"):

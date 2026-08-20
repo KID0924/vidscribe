@@ -169,6 +169,7 @@ export default function Editor({ projectId }: { projectId: string }) {
   const subStyleRef = useRef(subStyle);
   subStyleRef.current = subStyle;
   const subStyleTimer = useRef<number | undefined>(undefined);
+  const subStylePending = useRef<Promise<unknown> | null>(null);
 
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -438,13 +439,27 @@ export default function Editor({ projectId }: { projectId: string }) {
     [setSegments]
   );
 
+  // 送出樣式並記住這個請求,flush 才有東西可以等
+  const pushSubStyle = useCallback(
+    (next: SubStyle) => {
+      const p = api.updateSubStyle(projectId, next).catch(() => {});
+      subStylePending.current = p;
+      return p;
+    },
+    [projectId]
+  );
+
   // 還在等 debounce 的樣式先送出去,匯出才會照著預覽跑
   const flushSubStyle = useCallback(() => {
-    if (subStyleTimer.current === undefined) return Promise.resolve();
-    window.clearTimeout(subStyleTimer.current);
-    subStyleTimer.current = undefined;
-    return api.updateSubStyle(projectId, subStyleRef.current).then(() => undefined);
-  }, [projectId]);
+    if (subStyleTimer.current !== undefined) {
+      window.clearTimeout(subStyleTimer.current);
+      subStyleTimer.current = undefined;
+      return pushSubStyle(subStyleRef.current).then(() => undefined);
+    }
+    // 計時器已經觸發過了,但那個 PATCH 可能還在路上。只清計時器就直接放行的話,
+    // 燒錄會搶在寫入前開始,拿到的還是舊樣式——要等它真的落地。
+    return Promise.resolve(subStylePending.current).then(() => undefined);
+  }, [pushSubStyle]);
 
   // 字幕樣式:拖滑桿會連續觸發,延遲送出;離開頁面前把還沒送的沖掉
   const changeSubStyle = useCallback(
@@ -454,10 +469,10 @@ export default function Editor({ projectId }: { projectId: string }) {
       window.clearTimeout(subStyleTimer.current);
       subStyleTimer.current = window.setTimeout(() => {
         subStyleTimer.current = undefined;
-        api.updateSubStyle(projectId, next).catch(() => {});
+        pushSubStyle(next);
       }, 400);
     },
-    [projectId]
+    [pushSubStyle]
   );
 
   useEffect(

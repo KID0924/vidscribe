@@ -42,10 +42,14 @@ export function fontAscDescRatio(): number {
   return cachedAscDesc;
 }
 
-/** 對齊 Python 的 round():正好 .5 時進位到偶數,JS 的 Math.round 則一律進位。 */
+/**
+ * 對齊 Python 的 round():正好 .5 時進位到偶數,JS 的 Math.round 則一律往 +∞。
+ * 負數的 x % 1 是負的,所以不能只比 === 0.5——字幕拖到畫面左半邊時 dx 就是負的。
+ */
 function pyRound(x: number): number {
-  const r = Math.round(x);
-  return x % 1 === 0.5 && r % 2 !== 0 ? r - 1 : r;
+  if (Math.abs(x % 1) !== 0.5) return Math.round(x);
+  const down = Math.floor(x);
+  return down % 2 === 0 ? down : down + 1;
 }
 
 /** 全形字算 1、半形算 0.5;對應 exporter._char_units。 */
