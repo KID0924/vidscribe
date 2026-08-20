@@ -70,6 +70,14 @@ export interface ClipScores {
   value: number;
 }
 
+export interface ClipRegion {
+  /** 裁切中心(來源畫面比例 0..1) */
+  cx: number;
+  cy: number;
+  /** 上半部裁切高(來源畫面比例),愈小畫面愈放大;只有 top 有 */
+  h?: number;
+}
+
 export interface Clip {
   id: string;
   start: number;
@@ -79,8 +87,12 @@ export interface Clip {
   reason: string;
   scores: ClipScores;
   total_score: number;
-  /** 直式取景水平位置:-1 最左、0 置中、1 最右 */
+  /** 直式取景水平位置:-1 最左、0 置中、1 最右(單裁切用) */
   pan: number;
+  /** 版型:單裁切(預設)或「上臉下內容」拼接 */
+  layout?: "single" | "stack";
+  top?: ClipRegion;
+  content?: ClipRegion;
 }
 
 export interface ClipsJob {

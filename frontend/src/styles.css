@@ -1436,6 +1436,83 @@ a.btn {
   cursor: grabbing;
 }
 
+/* 拼接版型預覽:canvas 畫上下兩區,video 隱藏但照常播放 */
+.video-wrap.vert-preview .stack-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.video-wrap.vert-preview.stack video {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stack-drag {
+  position: absolute;
+  left: 0;
+  right: 0;
+  cursor: grab;
+  touch-action: none;
+  z-index: 7;
+}
+
+.stack-drag.top {
+  top: 0;
+  height: 45%;
+}
+
+.stack-drag.bot {
+  top: 45%;
+  bottom: 0;
+}
+
+.stack-drag:active {
+  cursor: grabbing;
+}
+
+/* 拼接縫的提示虛線 */
+.stack-seam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 45%;
+  border-top: 1px dashed rgba(255, 255, 255, 0.35);
+  z-index: 6;
+  pointer-events: none;
+}
+
+.stack-zoom {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 8;
+}
+
+.stack-zoom button {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+/* 拼接版:字幕壓在縫上(對齊燒錄的 MARGIN_V_STACK=0.53) */
+.video-wrap.vert-preview.stack .subtitle-overlay {
+  bottom: 53%;
+}
+
+/* 卡拉OK預覽:唸到的字上品牌綠(匯出才有平滑掃過) */
+.subtitle-overlay .k-on {
+  color: var(--green);
+}
+
 /* ---- 響應式 ---- */
 
 @media (max-width: 900px) {

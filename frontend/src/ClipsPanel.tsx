@@ -20,6 +20,9 @@ export default function ClipsPanel({
   exportJob,
   previewClipId,
   projectId,
+  canStack,
+  layoutBusyId,
+  onSetLayout,
   onPreview,
   onExitPreview,
   onNudge,
@@ -32,6 +35,11 @@ export default function ClipsPanel({
   exportJob: ClipExportJob | null;
   previewClipId: string | null;
   projectId: string;
+  /** 可用拼接版型(有裝人臉偵測且來源是橫式) */
+  canStack: boolean;
+  /** 正在做人臉偵測的短片 id */
+  layoutBusyId: string | null;
+  onSetLayout: (id: string, layout: "single" | "stack") => void;
   onPreview: (c: Clip) => void;
   onExitPreview: () => void;
   onNudge: (id: string, edge: "start" | "end", dir: -1 | 1) => void;
@@ -137,6 +145,28 @@ export default function ClipsPanel({
                       預覽
                     </button>
                   )}
+                  {canStack &&
+                    (layoutBusyId === c.id ? (
+                      <span className="clip-export-state">
+                        <span className="spinner" aria-hidden /> 偵測人臉…
+                      </span>
+                    ) : c.layout === "stack" ? (
+                      <button
+                        className="btn small"
+                        onClick={() => onSetLayout(c.id, "single")}
+                        title="改回單一畫面裁切"
+                      >
+                        單裁切
+                      </button>
+                    ) : (
+                      <button
+                        className="btn small"
+                        onClick={() => onSetLayout(c.id, "stack")}
+                        title="上半臉部、下半內容的拼接版型(自動偵測人臉)"
+                      >
+                        拼接
+                      </button>
+                    ))}
                   {isCurrent ? (
                     <span className="clip-export-state">
                       <span className="spinner" aria-hidden />{" "}

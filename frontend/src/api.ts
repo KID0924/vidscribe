@@ -17,7 +17,9 @@ async function json<T>(res: Response): Promise<T> {
 
 export const api = {
   getHealth: () =>
-    fetch("/api/health").then((r) => json<{ ffmpeg: boolean; claude: boolean }>(r)),
+    fetch("/api/health").then((r) =>
+      json<{ ffmpeg: boolean; claude: boolean; face: boolean }>(r)
+    ),
 
   listProjects: () => fetch("/api/projects").then((r) => json<Project[]>(r)),
 
@@ -128,6 +130,14 @@ export const api = {
     fetch(`/api/projects/${id}/clips`, { method: "DELETE" }).then((r) =>
       json<{ ok: boolean }>(r)
     ),
+
+  /** 切換短片版型;切拼接時後端會做人臉偵測(第一次較慢,約 2~3 秒)。 */
+  setClipLayout: (id: string, cid: string, layout: "single" | "stack") =>
+    fetch(`/api/projects/${id}/clips/${cid}/layout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ layout }),
+    }).then((r) => json<Clip>(r)),
 
   startClipExport: (id: string, ids: string[]) =>
     fetch(`/api/projects/${id}/clips/export`, {
