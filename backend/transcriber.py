@@ -1,10 +1,12 @@
 import json
 import subprocess
 import threading
-import traceback
+import time
 import uuid
 
-from . import config, storage
+from . import config, logs, storage
+
+log = logs.get(__name__)
 
 _model = None
 _model_device = None
@@ -80,7 +82,7 @@ def _get_model(status_cb):
                     )
                     _model_device = "cuda"
                 except Exception as e:
-                    print(f"[vidscribe] CUDA 初始化失敗,改用 CPU:{e}")
+                    log.warning("CUDA 初始化失敗,改用 CPU:%s", e)
                     _force_cpu = True
             if _model is None:
                 _model = WhisperModel(
@@ -151,6 +153,8 @@ def _run(pid: str) -> None:
             _running.discard(pid)
         return
     d = storage.project_dir(pid)
+    t0 = time.time()
+    log.info("辨識開始 %s「%s」語言=%s", pid, meta.get("name"), meta.get("lang"))
     try:
         _update(meta, status="extracting", progress=0.0, error=None)
         media = d / meta["media_file"]
@@ -164,7 +168,7 @@ def _run(pid: str) -> None:
             from . import waveform
             waveform.generate(audio, d / "waveform.json")
         except Exception:
-            traceback.print_exc()  # 波形失敗不影響辨識,之後 API 會再試一次
+            log.exception("波形產生失敗(不影響辨識,之後 API 會再試一次)")
 
         with _transcribe_lock:
             try:
@@ -172,8 +176,7 @@ def _run(pid: str) -> None:
             except Exception:
                 if _model_device == "cuda":
                     # GPU 在辨識途中失敗(常見於 cuDNN 缺 DLL),換 CPU 重試一次
-                    traceback.print_exc()
-                    print("[vidscribe] GPU 辨識失敗,改用 CPU 重試")
+                    log.exception("GPU 辨識失敗,改用 CPU 重試")
                     _reset_model_to_cpu()
                     segments = _transcribe(meta, audio, duration)
                 else:
@@ -193,12 +196,16 @@ def _run(pid: str) -> None:
         storage.backup_subtitles(pid)  # 覆蓋前備份舊字幕(若有)
         storage.save_subtitles(pid, {"version": 1, "segments": segments})
         _update(meta, status="done", progress=1.0)
+        log.info(
+            "辨識完成 %s:%d 句,影片 %.0f 秒,耗時 %.0f 秒,%s,語言=%s",
+            pid, len(segments), duration, time.time() - t0, meta.get("device"), meta.get("language"),
+        )
     except Exception as e:
-        traceback.print_exc()
+        log.exception("辨識失敗 %s", pid)
         try:
             _update(meta, status="error", error=str(e)[:500])
         except Exception:
-            traceback.print_exc()
+            log.exception("寫回錯誤狀態失敗 %s", pid)
     finally:
         with _running_lock:
             _running.discard(pid)

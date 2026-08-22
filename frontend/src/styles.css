@@ -701,6 +701,48 @@ button {
   flex-shrink: 0;
 }
 
+.link-btn.on {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* 取代列:接在搜尋列下方,同一塊底色,像是搜尋列長出來的第二行 */
+.replace-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 14px 8px;
+  padding: 6px 12px;
+  background: var(--panel-2);
+  border-radius: 10px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.replace-bar input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.replace-bar input:focus {
+  outline: none;
+}
+
+.replace-arrow {
+  flex-shrink: 0;
+  padding-left: 1px;
+}
+
+.replace-msg {
+  margin: -2px 14px 6px 40px;
+  font-size: 12.5px;
+  color: var(--green-dark);
+}
+
 .sub-list {
   flex: 1;
   overflow-y: auto;

@@ -10,12 +10,12 @@ import re
 import subprocess
 import threading
 import time
-import traceback
 
-from . import burn, clips, config, exporter, storage
+from . import burn, clipgeo, clips, config, exporter, logs, storage
+from .clipgeo import BOT_H, OUT_H, OUT_W, TOP_H  # 裁切幾何的常數與純函式都在 clipgeo
 
-OUT_W, OUT_H = 1080, 1920
-TOP_H, BOT_H = 864, 1056  # 拼接版型:上臉 45% / 下內容 55%
+log = logs.get(__name__)
+
 # 這兩個比例前端預覽也要用,改的話同步 frontend/src/subStyle.ts 的 CLIP_MARGIN_V
 MARGIN_V_SINGLE = 0.24    # 單裁切:字幕避開 Shorts/Reels 底部 22% UI 區
 MARGIN_V_STACK = 0.53     # 拼接:字幕壓在拼接縫上(縫在底部 55% 處)
@@ -115,22 +115,17 @@ def _even(x: float) -> int:
 
 
 def _build_vf(iw: int, ih: int, clip: dict) -> str:
-    """單裁切:置中裁 9:16(pan 調水平)。拼接:上臉下內容 vstack,字幕由 ASS 疊在縫上。"""
-    if clip.get("layout") == "stack" and iw * 16 > ih * 9:
+    """單裁切:裁 9:16(pan 調水平)。拼接:上臉下內容 vstack,字幕由 ASS 疊在縫上。
+
+    尺寸與位置全部來自 clipgeo(前端預覽同一套),這裡只負責組 ffmpeg 濾鏡字串。
+    """
+    if clip.get("layout") == "stack" and clipgeo.is_wide(iw, ih):
         top = clip.get("top") or {"cx": 0.5, "cy": 0.4, "h": 0.6}
         bot = clip.get("content") or {"cx": 0.5, "cy": 0.5}
-        # 上半:比例 1080:TOP_H,裁切高由 top.h 決定(愈小愈放大)
-        th = min(float(top["h"]) * ih, ih)
-        tw = th * OUT_W / TOP_H
-        if tw > iw:
-            tw = iw
-            th = tw * TOP_H / OUT_W
+        tw, th, bw, bh = clipgeo.stack_regions(iw, ih, float(top["h"]))
         tw, th = _even(tw), _even(th)
         tx = _even(min(max(float(top["cx"]) * iw - tw / 2, 0), iw - tw))
         ty = _even(min(max(float(top["cy"]) * ih - th / 2, 0), ih - th))
-        # 下半:比例 1080:BOT_H,盡量裁滿
-        bh = min(ih, iw * BOT_H / OUT_W)
-        bw = min(bh * OUT_W / BOT_H, iw)
         bw, bh = _even(bw), _even(bh)
         bx = _even(min(max(float(bot["cx"]) * iw - bw / 2, 0), iw - bw))
         by = _even(min(max(float(bot["cy"]) * ih - bh / 2, 0), ih - bh))
@@ -140,12 +135,8 @@ def _build_vf(iw: int, ih: int, clip: dict) -> str:
             f"[b]crop={bw}:{bh}:{bx}:{by},scale={OUT_W}:{BOT_H}[c];"
             f"[t][c]vstack,setsar=1,ass={ASS_NAME}"
         )
-    frac = (max(-1.0, min(1.0, float(clip.get("pan", 0.0)))) + 1) / 2
-    if iw * 16 > ih * 9:  # 比 9:16 寬(一般橫式)
-        crop = f"crop=w='2*floor(ih*9/32)':h=ih:x='(iw-ow)*{frac:.4f}':y=0"
-    else:  # 已是直式或更窄:裁高置中
-        crop = "crop=w=iw:h='2*floor(iw*8/9)':x=0:y='(ih-oh)/2'"
-    return f"{crop},scale={OUT_W}:{OUT_H},setsar=1,ass={ASS_NAME}"
+    w, h, x, y = clipgeo.single_crop(iw, ih, clip.get("pan", 0.0))
+    return f"crop={w}:{h}:{x}:{y},scale={OUT_W}:{OUT_H},setsar=1,ass={ASS_NAME}"
 
 
 def _render_clip(pid: str, d, media_name: str, clip: dict, iw: int, ih: int, job: dict) -> None:
@@ -235,7 +226,7 @@ def _render_clip(pid: str, d, media_name: str, clip: dict, iw: int, ih: int, job
             os.replace(d / out_part, d / out_final)
             return
         last_err = err_file.read_text(encoding="utf-8", errors="replace").strip()[-300:]
-        print(f"[vidscribe] {vcodec} 短片匯出失敗,換下一個編碼器:{last_err}")
+        log.warning("%s 短片匯出失敗,換下一個編碼器:%s", vcodec, last_err)
     err_file.unlink(missing_ok=True)
     raise RuntimeError(f"ffmpeg 匯出失敗:{last_err}")
 
@@ -280,12 +271,13 @@ def _run(pid: str, media_name: str, job: dict) -> None:
                 continue
             with _lock:
                 job["done_ids"].append(cid)
+            log.info("短片匯出完成 %s/%s(%s,%.1f 秒)", pid, cid, clip.get("layout") or "single", clip["end"] - clip["start"])
         if job["status"] == "canceled":
             cur = job.get("current")
             if cur:
                 storage.discard_file(out_dir / f"{cur}.mp4.part")
     except Exception as e:
-        traceback.print_exc()
+        log.exception("短片匯出失敗 %s", pid)
         if job.get("status") != "canceled":
             job["status"] = "error"
             cur = job.get("current")

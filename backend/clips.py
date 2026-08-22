@@ -15,16 +15,19 @@ import subprocess
 import sys
 import threading
 import time
-import traceback
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import config, llm, storage
+from . import burn, clipgeo, config, llm, logs, storage
+
+log = logs.get(__name__)
 
 MODEL = os.environ.get("VIDSCRIBE_CLIPS_MODEL", "sonnet")
 MIN_SEC = float(os.environ.get("VIDSCRIBE_CLIP_MIN", "15"))
 MAX_SEC = float(os.environ.get("VIDSCRIBE_CLIP_MAX", "75"))
 TIMEOUT = 600  # 整份逐字稿單次呼叫,比校正批次久
+FACE_WORKERS = 3  # 人臉對位同時跑幾支(ffmpeg/cv2 都會放開 GIL,純 CPU、不佔 GPU)
 
 SCHEMA = json.dumps(
     {
@@ -99,10 +102,16 @@ def clips_dir(pid: str) -> Path:
     return storage.project_dir(pid) / "clips"
 
 
+_STATE_KEYS = ("status", "clips", "error", "started_at", "stage", "faces_done", "faces_total")
+
+
 def _public_state(job: dict | None) -> dict:
     if job is None:
-        return {"status": "idle", "clips": [], "error": None, "started_at": None}
-    return {k: job[k] for k in ("status", "clips", "error", "started_at")}
+        return {
+            "status": "idle", "clips": [], "error": None, "started_at": None,
+            "stage": None, "faces_done": 0, "faces_total": 0,
+        }
+    return {k: job[k] for k in _STATE_KEYS}
 
 
 def load_clips(pid: str) -> list[dict]:
@@ -123,7 +132,7 @@ def get_state(pid: str) -> dict:
         if job is not None:
             return _public_state(job)
     if clips_file(pid).is_file():
-        return {"status": "done", "clips": load_clips(pid), "error": None, "started_at": None}
+        return {**_public_state(None), "status": "done", "clips": load_clips(pid)}
     return _public_state(None)
 
 
@@ -178,6 +187,8 @@ def update_clips(pid: str, clips: list[dict]) -> list[dict]:
             # 數值不合理(含 JSON 偷渡的 NaN/Infinity)一律退回原值
             item["start"], item["end"] = prev["start"], prev["end"]
             item["pan"] = prev.get("pan", 0.0)
+        if item["start"] != prev["start"] or item["end"] != prev["end"]:
+            item.pop("face", None)  # 範圍動了,分析時的臉框作廢,之後切拼接會重測
         # 拼接版型欄位:layout / top(上半裁切)/ content(下半裁切)
         layout = c.get("layout", prev.get("layout"))
         # 沒有 layout 的舊資料就讓它保持沒有(_build_vf 把「沒有」當單裁切)。
@@ -238,8 +249,15 @@ def set_layout(pid: str, cid: str, layout: str) -> dict:
         if not meta.get("has_video"):
             raise RuntimeError("純音訊檔沒有畫面")
         if "top" not in clip:
-            face = face_detect.detect(pid, clip["start"], clip["end"])
+            # 分析階段(_auto_pan)偵測過就直接用,含「沒有臉」的結果;沒快取才現測並寫回
+            cached = _cached_face(clip)
+            if cached is None:
+                face = face_detect.detect(pid, clip["start"], clip["end"])
+                clip["face"] = _face_entry(face, clip)
+            else:
+                face = cached if cached.get("found", True) else None
             if face is None:
+                save_clips(pid, items)  # 「沒有臉」也要記住,下次按拼接不必再跑一遍
                 raise RuntimeError("這段偵測不到人臉,維持單裁切")
             # 臉高×2.6 當上半部裁切高(中景),臉中心放在面板 42% 高度(頭頂留白)
             crop_h = min(max(face["h"] * 2.6, 0.25), 1.0)
@@ -277,6 +295,9 @@ def start(pid: str) -> dict:
         "clips": [],
         "error": None,
         "started_at": time.time(),
+        "stage": "analyze",  # analyze(LLM 選片)→ faces(逐支人臉對位)
+        "faces_done": 0,
+        "faces_total": 0,
         "cancel": False,
         "proc": None,
     }
@@ -343,6 +364,67 @@ def _validate(segments: list[dict], raw: list) -> list[dict]:
     return kept
 
 
+def _face_entry(face: dict | None, clip: dict) -> dict:
+    """clip["face"] 的快取格式:臉框(或 found=False)+ 當時的範圍;範圍動了 update_clips 會丟掉。"""
+    base = {"start": clip["start"], "end": clip["end"]}
+    return {**face, **base} if face else {"found": False, **base}
+
+
+def _cached_face(clip: dict) -> dict | None:
+    """拿 clip["face"] 快取;範圍對不上就當沒有(正常情況 update_clips 已經先清掉)。"""
+    cached = clip.get("face")
+    if not isinstance(cached, dict):
+        return None
+    if cached.get("start") != clip["start"] or cached.get("end") != clip["end"]:
+        return None
+    return cached
+
+
+def _auto_pan(pid: str, items: list[dict], job: dict) -> None:
+    """分析完主動對每支短片偵測人臉,把單裁切的取景(pan)初值對到臉上。
+
+    不是逐幀追蹤:每支算一次中位數臉心,使用者仍可拖。偵測不到就維持置中。
+    結果(含「沒有臉」)連同範圍存進 clip["face"],之後切拼接不必重測。
+    同時跑 FACE_WORKERS 支;取消時 should_stop 讓偵測中途收手,沒跑完的不寫快取。
+    """
+    from . import face_detect  # 延後匯入:沒裝 opencv 也不影響其他功能
+
+    if not items or not face_detect.available():
+        return
+    meta = storage.load_project(pid) or {}
+    try:
+        iw, ih = burn._probe_size(storage.project_dir(pid) / meta["media_file"])
+    except Exception:
+        log.exception("讀不到影片解析度,略過人臉對位 %s", pid)
+        return
+    with _lock:
+        job["stage"] = "faces"
+        job["faces_total"] = len(items)
+        job["faces_done"] = 0
+
+    def stopped() -> bool:
+        return bool(job["cancel"])
+
+    def work(c: dict) -> tuple[dict, dict | None, bool]:
+        if stopped():
+            return c, None, False
+        try:
+            face = face_detect.detect(pid, c["start"], c["end"], should_stop=stopped)
+        except Exception:
+            log.exception("人臉偵測失敗,這支維持置中 %s/%s", pid, c["id"])
+            return c, None, False
+        return c, face, not stopped()  # 中途被取消的結果不可信,不快取
+
+    with ThreadPoolExecutor(max_workers=FACE_WORKERS) as pool:
+        for c, face, complete in pool.map(work, items):
+            if complete:
+                c["face"] = _face_entry(face, c)
+                if face is not None:
+                    c["pan"] = clipgeo.face_pan(face["cx"], iw, ih)
+            with _lock:
+                job["faces_done"] += 1
+
+
 def _run(
     pid: str, cmd: list[str], segments: list[dict], job: dict, prompt: str
 ) -> None:
@@ -399,13 +481,31 @@ def _run(
             out = json.loads(text)
 
         clips = _validate(segments, out.get("clips") or [])
+        _auto_pan(pid, clips, job)
+        # 人臉對位階段按「取消」= 略過剩下的對位:LLM 選片很貴,結果照樣保留,
+        # 沒對到的維持置中(前端這時不會把 job 清掉,輪詢接著就會開面板)
+        skipped = bool(job["cancel"])
         # 新一輪結果,舊 id 的成品全部作廢
         shutil.rmtree(clips_dir(pid), ignore_errors=True)
         save_clips(pid, clips)
         job["clips"] = clips
         job["status"] = "done"
+        log.info(
+            "短片分析完成 %s:%d 支(%d 支對到人臉%s),耗時 %.0f 秒",
+            pid, len(clips),
+            sum(1 for c in clips if (c.get("face") or {}).get("found", True) and "cx" in (c.get("face") or {})),
+            ",使用者略過剩下的對位" if skipped else "",
+            time.time() - job["started_at"],
+        )
     except Exception as e:
-        traceback.print_exc()
+        log.exception("短片分析失敗 %s", pid)
         if job.get("status") != "canceled":
             job["status"] = "error"
             job["error"] = str(e)[:500]
+    finally:
+        if job.get("status") == "canceled":
+            # 取消掉的 job 不要留在記憶體裡:留著會讓 get_state 回「canceled、沒有短片」,
+            # 蓋掉上一輪還在磁碟上的 clips.json
+            with _lock:
+                if _jobs.get(pid) is job:
+                    _jobs.pop(pid)

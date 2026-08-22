@@ -13,3 +13,6 @@ models/
 # 個人參考資料(版權物,不公開)
 /spec.txt
 /Screenshot*.png
+
+# 執行日誌
+vidscribe.log*

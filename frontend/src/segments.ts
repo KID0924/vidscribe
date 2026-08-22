@@ -119,6 +119,38 @@ export function splitSegmentAtTime(seg: Segment, t: number): [Segment, Segment] 
   ];
 }
 
+/** 逐字時間戳與句子文字對得上才能做卡拉OK;編輯過就退回一般樣式(對應 exporter._karaoke_text)。 */
+export function usableWords(seg: Segment): NonNullable<Segment["words"]> | null {
+  const words = seg.words ?? [];
+  if (!words.length) return null;
+  if (words.map((w) => w.word).join("").trim() !== seg.text.trim()) return null;
+  return words;
+}
+
+/**
+ * 純文字取代(詞庫套用、搜尋取代共用):依 rules 順序把每句的 wrong 全換成 right。
+ * 沒動到的句子保留原物件(不產生多餘的復原紀錄);count 是總共換了幾處。
+ */
+export function replaceInSegments(
+  segments: Segment[],
+  rules: { wrong: string; right: string }[]
+): { segments: Segment[]; count: number } {
+  const active = rules.filter((r) => r.wrong !== "");
+  let count = 0;
+  const next = segments.map((s) => {
+    let t = s.text;
+    for (const r of active) {
+      const parts = t.split(r.wrong);
+      if (parts.length > 1) {
+        count += parts.length - 1;
+        t = parts.join(r.right);
+      }
+    }
+    return t === s.text ? s : { ...s, text: t };
+  });
+  return { segments: count ? next : segments, count };
+}
+
 /** 把 b 併進 a(a 在前)。 */
 export function mergeSegments(a: Segment, b: Segment): Segment {
   return {

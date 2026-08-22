@@ -8,9 +8,11 @@ import json
 import re
 import subprocess
 import threading
-import traceback
+import time
 
-from . import config, exporter, storage
+from . import config, exporter, logs, storage
+
+log = logs.get(__name__)
 
 OUT_NAME = "export.mp4"
 
@@ -104,6 +106,8 @@ def start(pid: str) -> dict:
 
 def _run(pid: str, d, media_name: str, duration: float, job: dict) -> None:
     err_file = d / "burn_err.txt"
+    t0 = time.time()
+    log.info("燒錄開始 %s(%.0f 秒)", pid, duration)
     try:
         last_err = ""
         for vcodec, acodec in ATTEMPTS:
@@ -143,12 +147,13 @@ def _run(pid: str, d, media_name: str, duration: float, job: dict) -> None:
             if proc.returncode == 0:
                 job["progress"] = 1.0
                 job["status"] = "done"
+                log.info("燒錄完成 %s:%s+%s,耗時 %.0f 秒", pid, vcodec, acodec, time.time() - t0)
                 return
             last_err = err_file.read_text(encoding="utf-8", errors="replace").strip()[-300:]
-            print(f"[vidscribe] {vcodec}+{acodec} 匯出失敗,換下一個組合:{last_err}")
+            log.warning("%s+%s 匯出失敗,換下一個組合:%s", vcodec, acodec, last_err)
         raise RuntimeError(f"ffmpeg 匯出失敗:{last_err}")
     except Exception as e:
-        traceback.print_exc()
+        log.exception("燒錄失敗 %s", pid)
         if job.get("status") != "canceled":
             job["status"] = "error"
             job["error"] = str(e)[:400]

@@ -18,10 +18,11 @@ import shutil
 import subprocess
 import threading
 import time
-import traceback
 from pathlib import Path
 
-from . import config, storage
+from . import config, logs, storage
+
+log = logs.get(__name__)
 
 MODEL = os.environ.get("VIDSCRIBE_FIX_MODEL", "sonnet")
 BATCH_CHARS = 4000  # 每批的字元預算
@@ -335,7 +336,7 @@ def _run(
                 suggestions = _run_batch(cmd, segments, indices, sys_prompt)
             except Exception:
                 # 沒有 schema 強制,偶爾會拿到壞 JSON;重試一次,再失敗才放棄整輪
-                traceback.print_exc()
+                log.warning("AI 校正批次失敗,重試一次", exc_info=True)
                 if job["cancel"]:
                     job["status"] = "canceled"
                     return
@@ -346,11 +347,15 @@ def _run(
         job["status"] = "done"
         with _lock:
             holder = dict(job)  # 邊跑邊審會併發改 suggestions,鎖內拿一致的快照
+        log.info(
+            "AI 校正完成 %s:%d 批,%d 條建議,耗時 %.0f 秒",
+            pid, len(batches), len(holder["suggestions"]), time.time() - holder["started_at"],
+        )
         try:
             _save_fix_file(pid, holder)
         except OSError:
-            traceback.print_exc()  # 存檔失敗不影響本次結果,只是重開伺服器會遺失
+            log.exception("fix.json 存檔失敗(不影響本次結果,只是重開伺服器會遺失)")
     except Exception as e:
-        traceback.print_exc()
+        log.exception("AI 校正失敗 %s", pid)
         job["status"] = "error"
         job["error"] = str(e)[:500]

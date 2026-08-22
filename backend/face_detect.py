@@ -2,13 +2,15 @@
 
 設計:
 - 模型隨 repo 附帶(backend/assets,~232KB,Apache-2.0),不用下載
-- 只在使用者把某支短片切成「拼接」時跑(選片後才偵測,不在分析階段全跑)
-- 抽樣幀 + 中位數聚合,單支短片 2~3 秒、純 CPU,不佔 GPU
+- 兩個時機:短片分析完對每支跑一次(clips._auto_pan,把單裁切的取景對到臉上、
+  結果快取在 clip["face"]);使用者切「拼接」時若沒有快取再跑
+- 抽樣幀 + 中位數聚合,單支短片 1~3 秒、純 CPU,不佔 GPU
 """
 
 import statistics
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from . import config, storage
@@ -29,8 +31,13 @@ def available() -> bool:
     return cv2 is not None and MODEL_PATH.is_file()
 
 
-def detect(pid: str, start: float, end: float) -> dict | None:
-    """在 [start, end] 均勻抽幀偵測人臉,回傳正規化的 {cx, cy, h};偵測不到回 None。"""
+def detect(
+    pid: str, start: float, end: float, should_stop: Callable[[], bool] | None = None
+) -> dict | None:
+    """在 [start, end] 均勻抽幀偵測人臉,回傳正規化的 {cx, cy, h};偵測不到回 None。
+
+    should_stop 回 True 就中途收手(回 None):分析被取消時不必等整支跑完。
+    """
     if not available():
         raise RuntimeError("未安裝 opencv,無法使用人臉偵測")
     meta = storage.load_project(pid)
@@ -49,6 +56,8 @@ def detect(pid: str, start: float, end: float) -> dict | None:
     with tempfile.TemporaryDirectory(prefix="vidscribe_face_") as td:
         frames = []
         for i, t in enumerate(times):
+            if should_stop and should_stop():
+                return None
             out = Path(td) / f"f{i:02d}.png"
             # 每個時間點各跑一次快速 input seek,比單次濾鏡逐幀掃整段快得多
             proc = subprocess.run(
@@ -63,6 +72,8 @@ def detect(pid: str, start: float, end: float) -> dict | None:
             return None
         det = cv2.FaceDetectorYN.create(str(MODEL_PATH), "", (0, 0), SCORE_THRESHOLD)
         for f in frames:
+            if should_stop and should_stop():
+                return None
             img = cv2.imread(str(f))
             if img is None:
                 continue

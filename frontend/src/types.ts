@@ -176,6 +176,11 @@ export interface Clip {
   layout?: "single" | "stack";
   top?: ClipRegion;
   content?: ClipRegion;
+  /**
+   * 人臉偵測快取(後端用):臉框(來源畫面比例)或 found=false,連同偵測時的範圍;
+   * 分析完拿來設 pan 初值、切拼接時免重測,範圍微調過後端會清掉
+   */
+  face?: { start: number; end: number; found?: boolean; cx?: number; cy?: number; h?: number };
 }
 
 export interface ClipsJob {
@@ -183,6 +188,10 @@ export interface ClipsJob {
   clips: Clip[];
   error: string | null;
   started_at: number | null;
+  /** analyze = LLM 選片中;faces = 逐支人臉對位中 */
+  stage?: "analyze" | "faces" | null;
+  faces_done?: number;
+  faces_total?: number;
 }
 
 export interface ClipExportJob {

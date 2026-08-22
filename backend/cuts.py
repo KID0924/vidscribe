@@ -8,9 +8,10 @@ import json
 import re
 import subprocess
 import threading
-import traceback
 
-from . import config, storage
+from . import config, logs, storage
+
+log = logs.get(__name__)
 
 THRESHOLD = 0.3
 _jobs: dict[str, dict] = {}
@@ -78,8 +79,9 @@ def _run(pid: str, media, job: dict) -> None:
             json.dump({"threshold": THRESHOLD, "cuts": cuts}, f)
         with _lock:
             job.update(status="done", cuts=cuts)
+        log.info("切點偵測完成 %s:%d 個", pid, len(cuts))
     except Exception as e:
-        traceback.print_exc()
+        log.exception("切點偵測失敗 %s", pid)
         with _lock:
             job.update(status="error", error=str(e)[:300])
     finally:

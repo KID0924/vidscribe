@@ -139,12 +139,7 @@ def _seg_layout(
     s_x = float(st.get("x", 0.5))
     s_y = st.get("y")
 
-    if s_scale == scale:
-        s_fs, s_out, s_shad = fs, outline, shadow
-    else:
-        s_fs = max(round(ref * 0.055 * s_scale), 16)
-        s_out = max(round(ref * 0.004 * s_scale), 2)
-        s_shad = max(round(ref * 0.002 * s_scale), 1)
+    s_fs, s_out, s_shad = _font_metrics(ref, s_scale)  # 沒覆蓋 scale 就等於 Style 的值
 
     dx = round((s_x - 0.5) * width)
     m_l = margin_lr + max(0, 2 * dx)
@@ -156,6 +151,36 @@ def _seg_layout(
     # ScaledBorderAndShadow 只跟解析度縮放,不會跟著 \fs 走,描邊要自己補上
     tags = "{" + f"\\fs{s_fs}\\bord{s_out}\\shad{s_shad}" + "}" if s_fs != fs else ""
     return s_units, f"{m_l},{m_r},{m_v}", tags
+
+
+def _font_metrics(ref: int, scale: float) -> tuple[int, int, int]:
+    """(字級, 描邊, 陰影)像素:按畫面短邊 ref 與倍率 scale 算、各有下限。
+
+    Style 行與逐句覆蓋(_seg_layout)都從這裡拿,字級規則只存在這一處。
+    """
+    return (
+        max(round(ref * 0.055 * scale), 16),
+        max(round(ref * 0.004 * scale), 2),
+        max(round(ref * 0.002 * scale), 1),
+    )
+
+
+def _base_layout(width: int, height: int, scale: float, margin_v_ratio: float) -> dict:
+    """整份字幕共用的幾何(Style 行的值):字級按短邊算、邊距四捨五入、有下限。
+
+    前端 subStyle.baseMetrics 照這裡重算一次(tests/ 有兩邊的對齊測試)。
+    """
+    # 字級按短邊算:橫式=高(行為不變),直式=寬(按高算 9:16 會一行塞不到十個字)
+    ref = min(width, height)
+    fs, outline, shadow = _font_metrics(ref, scale)
+    margin_v = max(round(height * margin_v_ratio), 20)
+    margin_lr = max(round(width * 0.06), 20)
+    # 一行塞得下的全形字數(0.95 是粗體的保險係數)
+    max_units = max((width - 2 * margin_lr) / fs * 0.95, 4.0)
+    return {
+        "ref": ref, "fs": fs, "outline": outline, "shadow": shadow,
+        "margin_v": margin_v, "margin_lr": margin_lr, "max_units": max_units,
+    }
 
 
 def to_ass(
@@ -177,15 +202,9 @@ def to_ass(
     \\pos —— \\pos 會連 libass 的邊界處理一起關掉,得自己重算所有幾何。
     沒有覆蓋的句子照樣寫 0,0,0(沿用 Style),輸出與加這個功能前一模一樣。
     """
-    # 字級按短邊算:橫式=高(行為不變),直式=寬(按高算 9:16 會一行塞不到十個字)
-    ref = min(width, height)
-    fs = max(round(ref * 0.055 * scale), 16)
-    outline = max(round(ref * 0.004 * scale), 2)
-    shadow = max(round(ref * 0.002 * scale), 1)
-    margin_v = max(round(height * margin_v_ratio), 20)
-    margin_lr = max(round(width * 0.06), 20)
-    # 一行塞得下的全形字數(0.95 是粗體的保險係數)
-    max_units = max((width - 2 * margin_lr) / fs * 0.95, 4.0)
+    base = _base_layout(width, height, scale, margin_v_ratio)
+    ref, fs, outline, shadow = base["ref"], base["fs"], base["outline"], base["shadow"]
+    margin_v, margin_lr, max_units = base["margin_v"], base["margin_lr"], base["max_units"]
     # 卡拉OK:PrimaryColour=唸到掃過的顏色(品牌綠 #38d321),SecondaryColour=還沒唸到(白)
     primary = "&H0021D338" if karaoke else "&H00FFFFFF"
     header = (

@@ -12,8 +12,11 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import (
     burn, clip_export, clips, config, cuts, dictionary, exporter, face_detect,
-    llm, storage, transcriber, waveform,
+    llm, logs, storage, transcriber, waveform,
 )
+
+logs.setup()
+log = logs.get(__name__)
 
 MEDIA_EXTS = {
     ".mp4", ".mov", ".mkv", ".webm", ".avi", ".mts", ".m2ts",
@@ -25,6 +28,11 @@ MEDIA_EXTS = {
 async def lifespan(app: FastAPI):
     config.PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
     storage.mark_stale_jobs_interrupted()
+    log.info(
+        "啟動 http://%s:%s  資料=%s  模型=%s  ffmpeg=%s  claude=%s  人臉偵測=%s",
+        config.HOST, config.PORT, config.PROJECTS_DIR, config.MODEL_NAME,
+        config.ffmpeg_available(), llm.find_claude() is not None, face_detect.available(),
+    )
 
     # 瀏覽器拖影片進度條時會不斷掐斷串流連線,Windows 的 Proactor 迴圈
     # 每次都印一段 ConnectionResetError——無害但很吵,這裡吃掉它。

@@ -14,7 +14,7 @@
   中文輸出自動簡轉繁+台灣用語(OpenCC)。**每個專案可選中文/英文/自動偵測**,
   選錯可以換語言重新辨識;英文專案的 AI 校正會自動改用英文校對規則
 - **編輯器**:Enter 斷句、句首 Backspace 合併、Tab 跳行、全程鍵盤操作;
-  復原/重做、自動存檔、搜尋過濾、每句字數與閱讀速度統計
+  復原/重做、自動存檔、搜尋過濾與全部取代、每句字數與閱讀速度統計
 - **波形區**:拖拉字幕方塊調時間、磁吸(鄰句/Mark 點/畫面切點)、
   B 鍵切開、雙擊設 Mark 點、切點偵測(ffmpeg 場景偵測)、hover 跟播
 - **詞庫**:「錯誤寫法 → 正確寫法」清單,每次辨識完自動取代(人名、品牌名一勞永逸)
@@ -22,7 +22,8 @@
   用你自己的訂閱抓同音錯字與中國用語,diff 逐句審閱,不自動套用、碰不到時間軸;
   建議隨批次陸續出現,第一批好了就能開始審,不用等整支影片跑完
 - **短片(選配)**:AI 從逐字稿挑出適合 Shorts/Reels 的片段(抓力/情緒/好奇/價值
-  0–10 評分、附理由),逐支預覽、微調頭尾與取景後匯出 9:16 直式影片,
+  0–10 評分、附理由),分析完會自動偵測人臉、把直式取景對到臉上,
+  逐支預覽、微調頭尾與取景後匯出 9:16 直式影片,
   字幕**逐字隨語音掃色**(卡拉OK式)且自動避開平台底部 UI 區;
   可一鍵切換「拼接」版型——自動偵測人臉,上半臉部、下半主內容,
   上下兩區各自拖曳調整構圖(人臉偵測用 OpenCV YuNet,模型隨附、純 CPU)
@@ -55,6 +56,8 @@ git clone <本倉庫>
 - **模型下載失敗 / 連不上 HuggingFace**(部分地區會被擋):啟動前設定鏡像站
   環境變數即可,例如在 `start.bat` 的 `@echo off` 下一行加
   `set HF_ENDPOINT=https://hf-mirror.com`
+- **出問題要回報**:程式資料夾裡的 `vidscribe.log` 記錄了每次辨識、匯出、AI 呼叫
+  的經過與錯誤訊息,附上它最快找到原因。
 - **macOS / Linux**:`setup.bat`/`start.bat` 是 Windows 腳本,其他平台請手動安裝:
   裝好 Python 3.13 與 ffmpeg 後,`python -m venv .venv`、
   用 venv 的 pip 裝 `backend/requirements.lock.txt`
@@ -107,6 +110,10 @@ cd frontend; npm run dev
 
 # 前端改完要正式使用時重新建置
 cd frontend; npm run build
+
+# 測試(字幕預覽與燒錄成品必須是同一套幾何,兩邊各有一份比對同一組 fixture)
+.venv\Scripts\python.exe -m unittest discover -s tests -t .
+cd frontend; npm test
 ```
 
 架構:Python FastAPI 後端(faster-whisper、ffmpeg、OpenCC)+ React/Vite 前端;

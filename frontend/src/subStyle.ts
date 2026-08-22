@@ -4,13 +4,37 @@
  * 預覽跟燒錄成品長得一樣才有意義——不然使用者照著安全框把字幕調到剛好避開
  * 平台 UI,匯出卻是另一個位置。這裡的比例、斷行規則若要改,兩邊要一起改。
  */
-import type { SegStyle, SubStyle } from "./types";
+import type { Clip, SegStyle, SubStyle } from "./types";
 
 /** 直式短片的距底比例:對齊 backend/clip_export.py 的 MARGIN_V_SINGLE / MARGIN_V_STACK。 */
 export const CLIP_MARGIN_V = { single: 0.24, stack: 0.53 };
 
 /** 直式短片的輸出畫面尺寸:對齊 backend/clip_export.py 的 OUT_W / OUT_H。 */
 export const CLIP_OUT = { w: 1080, h: 1920 };
+
+/** 拼接版型上下兩區的高(輸出像素):對齊 backend/clip_export.py 的 TOP_H / BOT_H。 */
+export const CLIP_STACK = { top: 864, bot: 1056 };
+
+/**
+ * 拼接版型的裁切幾何:某一區(上臉/下內容)在來源畫面上的裁切框尺寸與中心。
+ * 與後端 clip_export._build_vf、預覽 canvas 共用同一套數學,改一邊要一起改。
+ */
+export function stackRegion(clip: Clip, zone: "top" | "content", iw: number, ih: number) {
+  if (zone === "top") {
+    const r = clip.top ?? { cx: 0.5, cy: 0.4, h: 0.6 };
+    let th = Math.min((r.h ?? 0.6) * ih, ih);
+    let tw = (th * CLIP_OUT.w) / CLIP_STACK.top;
+    if (tw > iw) {
+      tw = iw;
+      th = (tw * CLIP_STACK.top) / CLIP_OUT.w;
+    }
+    return { r, w: tw, h: th };
+  }
+  const r = clip.content ?? { cx: 0.5, cy: 0.5 };
+  const bh = Math.min(ih, (iw * CLIP_STACK.bot) / CLIP_OUT.w);
+  const bw = Math.min((bh * CLIP_OUT.w) / CLIP_STACK.bot, iw);
+  return { r, w: bw, h: bh };
+}
 
 /** 燒錄用的字型堆疊;第一順位要跟 exporter.to_ass 的 Style 一致。 */
 export const SUB_FONT = '"Microsoft JhengHei", "微軟正黑體", sans-serif';
@@ -146,6 +170,37 @@ export function resolveStyle(
   };
 }
 
+/** 輸出畫面座標下的整數幾何(ASS 實際寫進去的值),給 subMetrics 與對齊測試用。 */
+export interface BaseMetrics {
+  /** ASS Fontsize */
+  fs: number;
+  /** Dialogue 實際生效的 MarginL / MarginR / MarginV */
+  mL: number;
+  mR: number;
+  mV: number;
+  /** 文字可用寬度(px) */
+  usable: number;
+  /** 一行塞得下的全形字數 */
+  maxUnits: number;
+}
+
+/**
+ * 結算後的樣式 → 輸出畫面的整數幾何。對應 exporter.to_ass / _seg_layout:
+ * 字級按短邊算、邊距四捨五入(pyRound)、有下限,水平位移靠左右邊距不對稱。
+ */
+export function baseMetrics(srcW: number, srcH: number, eff: EffectiveStyle): BaseMetrics {
+  const ref = Math.min(srcW, srcH);
+  const fs = Math.max(pyRound(ref * 0.055 * eff.scale), 16);
+  const base = Math.max(pyRound(srcW * 0.06), 20);
+  const dx = pyRound((eff.x - 0.5) * srcW);
+  const mL = base + Math.max(0, 2 * dx);
+  const mR = base + Math.max(0, -2 * dx);
+  const mV = Math.max(pyRound(srcH * eff.marginV), 20);
+  const usable = Math.max(srcW - mL - mR, fs);
+  // 0.95 是粗體的保險係數,與 exporter.to_ass 一致
+  return { fs, mL, mR, mV, usable, maxUnits: Math.max((usable / fs) * 0.95, 4) };
+}
+
 export interface SubMetrics {
   /** CSS font-size(px);已經換算過 libass 的字身比例 */
   fontSize: number;
@@ -178,14 +233,7 @@ export function subMetrics(
   srcH: number,
   eff: EffectiveStyle
 ): SubMetrics {
-  const ref = Math.min(srcW, srcH);
-  const fs = Math.max(pyRound(ref * 0.055 * eff.scale), 16);
-  const base = Math.max(pyRound(srcW * 0.06), 20);
-  const dx = pyRound((eff.x - 0.5) * srcW);
-  const mL = base + Math.max(0, 2 * dx);
-  const mR = base + Math.max(0, -2 * dx);
-  const mV = Math.max(pyRound(srcH * eff.marginV), 20);
-  const usable = Math.max(srcW - mL - mR, fs);
+  const { fs, mL, mV, usable, maxUnits } = baseMetrics(srcW, srcH, eff);
   // 預覽與輸出的縮放比;兩者同長寬比,分開算只是為了不受 clientWidth 取整的影響
   const kx = frameW / srcW;
   const ky = frameH / srcH;
@@ -196,7 +244,6 @@ export function subMetrics(
     left: mL * kx,
     width: usable * kx,
     bottom: mV * ky,
-    // 0.95 是粗體的保險係數,與 exporter.to_ass 一致
-    maxUnits: Math.max((usable / fs) * 0.95, 4),
+    maxUnits,
   };
 }
