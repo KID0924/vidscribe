@@ -128,42 +128,56 @@ export default function JobToasts({
         </div>
       )}
 
-      {burnJob && (burnJob.status === "running" || burnJob.status === "done") && (
-        <div className="fix-status" role="status">
-          <div className="fix-status-head">
-            {burnJob.status === "running" && <span className="spinner" aria-hidden />}
-            <span className="fix-title">
-              {burnJob.status === "running" ? "匯出影片中" : "影片匯出完成"}
-            </span>
-            <span className="toolbar-spacer" />
-            {burnJob.status === "running" ? (
-              <button className="btn small" onClick={onCancelBurn}>
-                取消
-              </button>
-            ) : (
-              <>
-                <a className="btn small primary" href={api.burnFileUrl(projectId)}>
-                  下載影片
-                </a>
-                <button className="btn small" onClick={onDismissBurn}>
-                  關閉
+      {burnJob &&
+        (burnJob.status === "running" ||
+          burnJob.status === "done" ||
+          burnJob.status === "error") && (
+          <div className={"fix-status" + (burnJob.status === "error" ? " failed" : "")} role="status">
+            <div className="fix-status-head">
+              {burnJob.status === "running" && <span className="spinner" aria-hidden />}
+              <span className="fix-title">
+                {burnJob.status === "running"
+                  ? "匯出影片中"
+                  : burnJob.status === "done"
+                    ? "影片匯出完成"
+                    : "影片匯出失敗"}
+              </span>
+              <span className="toolbar-spacer" />
+              {burnJob.status === "running" ? (
+                <button className="btn small" onClick={onCancelBurn}>
+                  取消
                 </button>
-              </>
+              ) : (
+                <>
+                  {burnJob.status === "done" && (
+                    <a className="btn small primary" href={api.burnFileUrl(projectId)}>
+                      下載影片
+                    </a>
+                  )}
+                  <button className="btn small" onClick={onDismissBurn}>
+                    關閉
+                  </button>
+                </>
+              )}
+            </div>
+            {burnJob.status !== "error" && (
+              <span className="bar fix-status-bar">
+                <span
+                  className={"bar-fill" + (burnJob.status === "running" ? " pulsing" : "")}
+                  style={{ width: `${Math.max(burnJob.progress * 100, 3)}%` }}
+                />
+              </span>
+            )}
+            {burnJob.status === "running" && (
+              <div className="fix-status-info">
+                {Math.round(burnJob.progress * 100)}% · NVENC 硬體編碼(失敗自動改用 CPU)
+              </div>
+            )}
+            {burnJob.status === "error" && (
+              <div className="fix-status-info error-text">{burnJob.error ?? "未知錯誤"}</div>
             )}
           </div>
-          <span className="bar fix-status-bar">
-            <span
-              className={"bar-fill" + (burnJob.status === "running" ? " pulsing" : "")}
-              style={{ width: `${Math.max(burnJob.progress * 100, 3)}%` }}
-            />
-          </span>
-          {burnJob.status === "running" && (
-            <div className="fix-status-info">
-              {Math.round(burnJob.progress * 100)}% · NVENC 硬體編碼(失敗自動改用 CPU)
-            </div>
-          )}
-        </div>
-      )}
+        )}
     </div>
   );
 }

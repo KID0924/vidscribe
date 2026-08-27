@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { ask, notify } from "../dialogs";
 import type { FixJob, FixSuggestion, Segment } from "../types";
 
 /** 建議的識別鍵:同一句同樣的原文只會有一條。 */
@@ -69,12 +70,12 @@ export function useFixJob({ projectId, ready, setSegments, segmentsRef, flushSav
           }
           if (j.status === "done") {
             if (!fresh.length && handledKeysRef.current.size === 0) {
-              alert("AI 檢查完了,沒有找到需要修正的地方。");
+              notify("AI 檢查完了,沒有找到需要修正的地方。", "info");
               api.cancelFix(projectId).catch(() => {});
               setFixJob(null);
             }
           } else if (j.status === "error") {
-            alert(`AI 校正失敗:${j.error ?? "未知錯誤"}`);
+            notify(`AI 校正失敗:${j.error ?? "未知錯誤"}`);
             api.cancelFix(projectId).catch(() => {});
             setFixJob(null);
           }
@@ -91,22 +92,27 @@ export function useFixJob({ projectId, ready, setSegments, segmentsRef, flushSav
       flushSave()
         .then(() => api.startFix(projectId, ids))
         .then(setFixJob)
-        .catch((e: Error) => alert(e.message));
+        .catch((e: Error) => notify(e.message));
     },
     [projectId, flushSave]
   );
 
-  const cancelFix = useCallback(() => {
-    if (!confirm("取消這次 AI 校正?")) return;
+  const cancelFix = useCallback(async () => {
+    if (!(await ask("取消這次 AI 校正?", { confirmLabel: "取消分析", cancelLabel: "繼續跑" })))
+      return;
     api.cancelFix(projectId).catch(() => {});
     setFixJob(null);
     setReviewItems(null);
   }, [projectId]);
 
-  const dismissReview = useCallback(() => {
+  const dismissReview = useCallback(async () => {
     if (
       fixJob?.status === "running" &&
-      !confirm("AI 校正還在進行中,關閉會取消分析並捨棄尚未審閱的建議。繼續?")
+      !(await ask("AI 校正還在進行中,關閉會取消分析並捨棄尚未審閱的建議。繼續?", {
+        confirmLabel: "關閉並捨棄",
+        cancelLabel: "繼續審閱",
+        danger: true,
+      }))
     ) {
       return;
     }

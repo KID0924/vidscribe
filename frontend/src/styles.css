@@ -376,6 +376,9 @@ button {
 }
 
 .upload-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: var(--danger);
 }
 
@@ -507,6 +510,14 @@ button {
 .card-delete:hover {
   background: var(--panel-2);
   color: var(--danger);
+}
+
+/* 沒有滑鼠的裝置沒有 hover,這兩顆再藏就永遠點不到 */
+@media (hover: none) {
+  .card-delete,
+  .row-delete {
+    opacity: 1;
+  }
 }
 
 /* ---- 轉圈 ---- */
@@ -1213,17 +1224,71 @@ a.btn {
 
 /* ---- AI 校正審閱面板 ---- */
 
-.fix-panel {
+/* ---- 右側面板底座 ----
+   詞庫 / 短片 / AI 校正建議都固定在這一格,同時只顯示一個,
+   其餘開著的變成上方分頁(內容留在 DOM 裡,切回來草稿還在)。 */
+
+.panel-dock {
   position: fixed;
   right: 16px;
   top: 118px;
   bottom: 16px;
   width: min(400px, calc(100vw - 32px));
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel-tabs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+}
+
+.panel-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  padding: 5px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.panel-tab:hover {
+  background: var(--panel-2);
+}
+
+.panel-tab.on {
+  background: var(--green-soft);
+  color: var(--green-ink);
+}
+
+.panel-slot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.panel-slot.hidden {
+  display: none;
+}
+
+.fix-panel {
+  flex: 1;
+  min-height: 0;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
-  z-index: 40;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1371,6 +1436,12 @@ a.btn {
   gap: 12px;
   z-index: 40;
   pointer-events: none;
+  transition: right 0.18s ease;
+}
+
+/* 面板開著時任務卡讓到左邊,免得壓住清單最後幾筆 */
+.page.panel-open .toast-stack {
+  right: calc(min(400px, 100vw - 32px) + 28px);
 }
 
 .toast-stack .fix-status {
@@ -1710,6 +1781,167 @@ a.btn {
   background: var(--green);
 }
 
+/* ---- 刪除後的反悔提示條 ---- */
+
+.undo-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(460px, calc(100vw - 32px));
+}
+
+.undo-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 16px;
+  background: var(--text);
+  color: #f6f6f4;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  font-size: 13.5px;
+  animation: notice-in 0.16s ease;
+}
+
+.undo-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.undo-item .btn {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.undo-item .btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* ---- 訊息卡與確認框(取代瀏覽器原生 alert / confirm) ---- */
+
+.notice-stack {
+  position: fixed;
+  top: 68px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(460px, calc(100vw - 32px));
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  font-size: 13.5px;
+  line-height: 1.6;
+  animation: notice-in 0.16s ease;
+}
+
+.notice-error {
+  background: #fff6f6;
+  border-color: #f0c3c2;
+  color: #8f1f1e;
+}
+
+.notice-text {
+  flex: 1;
+  word-break: break-word;
+}
+
+.notice-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 0 2px;
+}
+
+.notice-close:hover {
+  opacity: 1;
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(23, 24, 26, 0.32);
+  animation: notice-in 0.12s ease;
+}
+
+.dialog {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dialog-text {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.75;
+  white-space: pre-line;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+  font-weight: 700;
+}
+
+.btn.danger:hover {
+  filter: brightness(1.06);
+  border-color: var(--danger);
+  background: var(--danger);
+}
+
 /* ---- 響應式 ---- */
 
 @media (max-width: 900px) {
@@ -1730,6 +1962,15 @@ a.btn {
 
   .topbar-note {
     display: none;
+  }
+
+  /* 面板在這個寬度幾乎滿版,任務卡沒地方讓,改成讓清單能捲到卡片後面 */
+  .page.panel-open .toast-stack {
+    right: 16px;
+  }
+
+  .page.panel-open .fix-list {
+    padding-bottom: 132px;
   }
 }
 

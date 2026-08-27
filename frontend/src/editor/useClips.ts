@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { ask, notify } from "../dialogs";
 import type { Clip, ClipExportJob, ClipsJob, Segment } from "../types";
 
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -63,30 +64,39 @@ export function useClips({ projectId, ready, segmentsRef, flushAll, playRange, s
     api
       .startClipsAnalyze(projectId)
       .then(setClipsJob)
-      .catch((e: Error) => alert(e.message));
+      .catch((e: Error) => notify(e.message));
   }, [projectId]);
 
-  const cancelClipsAnalyze = useCallback(() => {
+  const cancelClipsAnalyze = useCallback(async () => {
     if (clipsJob?.stage === "faces") {
       // 選片已經完成,這時取消 = 略過剩下的人臉對位;後端會把結果存下來並標 done,
       // job 留著讓輪詢接到 done 去開面板
-      if (!confirm("略過剩下的人臉對位?已挑出的短片會保留,沒對到的取景維持置中,之後可以手動拖。")) return;
+      const ok = await ask(
+        "略過剩下的人臉對位?已挑出的短片會保留,沒對到的取景維持置中,之後可以手動拖。",
+        { confirmLabel: "略過對位", cancelLabel: "繼續對位" }
+      );
+      if (!ok) return;
       api.cancelClips(projectId).catch(() => {});
       return;
     }
-    if (!confirm("取消這次短片分析?")) return;
+    if (!(await ask("取消這次短片分析?", { confirmLabel: "取消分析", cancelLabel: "繼續跑" })))
+      return;
     api.cancelClips(projectId).catch(() => {});
     setClipsJob(null);
   }, [projectId, clipsJob?.stage]);
 
-  const reanalyzeClips = useCallback(() => {
-    if (!confirm("重新分析會覆蓋目前的短片清單與已匯出的檔案。繼續?")) return;
+  const reanalyzeClips = useCallback(async () => {
+    const ok = await ask("重新分析會覆蓋目前的短片清單與已匯出的檔案。繼續?", {
+      confirmLabel: "重新分析",
+      danger: true,
+    });
+    if (!ok) return;
     setClipsOpen(false);
     setPreviewClipId(null);
     api
       .startClipsAnalyze(projectId)
       .then(setClipsJob)
-      .catch((e: Error) => alert(e.message));
+      .catch((e: Error) => notify(e.message));
   }, [projectId]);
 
   // 短片分析輪詢;完成後打開面板
@@ -102,11 +112,11 @@ export function useClips({ projectId, ready, segmentsRef, flushAll, playRange, s
             if (j.clips?.length) {
               setClipsOpen(true);
             } else {
-              alert("AI 沒有找到適合做短片的片段。");
+              notify("AI 沒有找到適合做短片的片段。", "info");
               setClipsJob(null);
             }
           } else if (j.status === "error") {
-            alert(`短片分析失敗:${j.error ?? "未知錯誤"}`);
+            notify(`短片分析失敗:${j.error ?? "未知錯誤"}`);
             setClipsJob(null);
           }
         })
@@ -126,7 +136,7 @@ export function useClips({ projectId, ready, segmentsRef, flushAll, playRange, s
           return api.getClipExport(projectId);
         })
         .then(setClipExport)
-        .catch(() => alert("短片清單儲存失敗"));
+        .catch(() => notify("短片清單儲存失敗"));
     },
     [projectId]
   );
@@ -189,7 +199,7 @@ export function useClips({ projectId, ready, segmentsRef, flushAll, playRange, s
       flushAll()
         .then(() => api.startClipExport(projectId, ids))
         .then(setClipExport)
-        .catch((e: Error) => alert(e.message));
+        .catch((e: Error) => notify(e.message));
     },
     [projectId, flushAll]
   );
@@ -210,7 +220,7 @@ export function useClips({ projectId, ready, segmentsRef, flushAll, playRange, s
         .getClipExport(projectId)
         .then((j) => {
           if (j.status === "error") {
-            alert(`短片匯出失敗:${j.error ?? "未知錯誤"}`);
+            notify(`短片匯出失敗:${j.error ?? "未知錯誤"}`);
             api.cancelClipExport(projectId).catch(() => {});
           }
           setClipExport(j);
@@ -231,7 +241,7 @@ export function useClips({ projectId, ready, segmentsRef, flushAll, playRange, s
           return api.getClipExport(projectId); // 版型變了成品作廢,刷新下載狀態
         })
         .then(setClipExport)
-        .catch((e: Error) => alert(e.message))
+        .catch((e: Error) => notify(e.message))
         .finally(() => setLayoutBusyId(null));
     },
     [projectId]

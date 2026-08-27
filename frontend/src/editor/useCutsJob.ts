@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { notify } from "../dialogs";
 
 /** 切點偵測:載入既有結果;偵測中每 2 秒輪詢。ready = 專案已辨識完成。 */
 export function useCutsJob(projectId: string, ready: boolean) {
@@ -32,7 +33,7 @@ export function useCutsJob(projectId: string, ready: boolean) {
             setCuts(c.cuts);
             setCutsStatus("done");
           } else if (c.status === "error") {
-            alert(`切點偵測失敗:${c.error ?? "未知錯誤"}`);
+            notify(`切點偵測失敗:${c.error ?? "未知錯誤"}`);
             setCutsStatus("idle");
           }
         })
@@ -45,7 +46,7 @@ export function useCutsJob(projectId: string, ready: boolean) {
     api
       .startCuts(projectId)
       .then(() => setCutsStatus("running"))
-      .catch((e: Error) => alert(e.message));
+      .catch((e: Error) => notify(e.message));
   }, [projectId]);
 
   return { cuts, cutsStatus, detectCuts };

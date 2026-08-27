@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import ClipsPanel from "./ClipsPanel";
+import { ask, notify } from "./dialogs";
 import { useHistoryState } from "./history";
 import SafeFrame, { SAFE_FRAMES, SafeZoneOverlay, matchPresetByRatio } from "./SafeFrame";
 import {
@@ -44,6 +45,7 @@ import { useClipPreview } from "./editor/useClipPreview";
 import { useClips } from "./editor/useClips";
 import { useCutsJob } from "./editor/useCutsJob";
 import { useFixJob } from "./editor/useFixJob";
+import { closeAllMenus } from "./editor/useMenuAutoClose";
 import { useSubStyle } from "./editor/useSubStyle";
 
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -52,6 +54,14 @@ interface EditingState {
   id: string;
   cursor: number;
 }
+
+/** 右側三個面板疊在同一個位置,同時只顯示一個 */
+type PanelKey = "dict" | "clips" | "fix";
+const PANEL_LABEL: Record<PanelKey, string> = {
+  dict: "詞庫",
+  clips: "短片",
+  fix: "AI 校正",
+};
 
 /**
  * 編輯器的狀態中樞:字幕(含復原/重做)、播放、選取/編輯、快捷鍵、搜尋取代。
@@ -250,6 +260,8 @@ export default function Editor({ projectId }: { projectId: string }) {
   const clipState = useClips({ projectId, ready, segmentsRef, flushAll, playRange, stopPlayback });
   const { clips, clipsJob, clipsOpen, setClipsOpen, clipExport, previewClipId, previewClip } =
     clipState;
+  const { exitPreview, closePanel } = clipState;
+  const { dismissReview } = fix;
   const isStackPreview = previewClip?.layout === "stack";
   const preview = useClipPreview({
     previewClipId,
@@ -260,6 +272,45 @@ export default function Editor({ projectId }: { projectId: string }) {
     videoRef,
     stackCanvasRef,
   });
+
+  // ---- 右側面板(詞庫 / 短片 / AI 校正建議)----
+  // 三個都固定在右側同一格,所以同時只顯示一個、其餘變成上方分頁。內容留在 DOM 裡
+  // (CSS 藏起來),切回來時輸入到一半的東西還在。
+  const fixOpen = fix.reviewItems !== null;
+  const openPanels = useMemo(() => {
+    const list: PanelKey[] = [];
+    if (dictOpen) list.push("dict");
+    if (clipsOpen) list.push("clips");
+    if (fixOpen) list.push("fix");
+    return list;
+  }, [dictOpen, clipsOpen, fixOpen]);
+  const [panelFocus, setPanelFocus] = useState<PanelKey | null>(null);
+  const activePanel: PanelKey | null =
+    panelFocus && openPanels.includes(panelFocus)
+      ? panelFocus
+      : openPanels.length
+        ? openPanels[openPanels.length - 1]
+        : null;
+  const activePanelRef = useRef(activePanel);
+  activePanelRef.current = activePanel;
+
+  // 新開的面板自動變成顯示中的那個(短片分析跑完會自己開)
+  const prevOpenRef = useRef<PanelKey[]>([]);
+  useEffect(() => {
+    const added = openPanels.find((k) => !prevOpenRef.current.includes(k));
+    prevOpenRef.current = openPanels;
+    if (added) setPanelFocus(added);
+  }, [openPanels]);
+
+  /** 關掉目前顯示的那個面板;有關到才回 true(Esc 用)。 */
+  const closeActivePanel = useCallback(() => {
+    const k = activePanelRef.current;
+    if (!k) return false;
+    if (k === "dict") setDictOpen(false);
+    else if (k === "clips") closePanel();
+    else dismissReview();
+    return true;
+  }, [closePanel, dismissReview]);
 
   /** 改某一句的樣式覆蓋;patch 給 null 代表整個拿掉,回到專案設定。 */
   const setSegStyle = useCallback(
@@ -450,8 +501,26 @@ export default function Editor({ projectId }: { projectId: string }) {
   // 全域快捷鍵(編輯框內不攔截)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+      const el = e.target as HTMLElement | null;
+      // 打字中一律不攔(Esc 也由編輯中的那一列自己處理)
+      if (el?.closest?.("input, textarea, [contenteditable='true']")) return;
+
+      // Esc 的優先序:展開中的選單 → 直式預覽 → 右側面板
+      if (e.key === "Escape") {
+        if (closeAllMenus()) e.preventDefault();
+        else if (previewClipId) {
+          e.preventDefault();
+          exitPreview();
+        } else if (closeActivePanel()) {
+          e.preventDefault();
+        }
+        return;
+      }
+
+      // 焦點在下拉選單、選單、面板或確認框裡:那些鍵是它們自己的,不要搶
+      // (以前空白鍵會把「安全框」下拉選單的展開吃掉、Delete 會誤刪面板後面選中的字幕)
+      if (el?.closest?.("select, summary, details[open], .panel-dock, .dialog-backdrop")) return;
+
       const ctrl = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (ctrl && key === "z" && !e.shiftKey) {
@@ -520,7 +589,17 @@ export default function Editor({ projectId }: { projectId: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, seekTo, togglePlay, setSegments, deleteSegment]);
+  }, [
+    undo,
+    redo,
+    seekTo,
+    togglePlay,
+    setSegments,
+    deleteSegment,
+    closeActivePanel,
+    exitPreview,
+    previewClipId,
+  ]);
 
   const activeIdx = useMemo(() => activeIndexAt(segments, currentTime), [segments, currentTime]);
 
@@ -584,21 +663,20 @@ export default function Editor({ projectId }: { projectId: string }) {
   const statIdx = selectedIdx >= 0 ? selectedIdx : activeIdx;
   const statSeg = statIdx >= 0 ? segments[statIdx] : null;
 
-  const retranscribe = (lang: Lang) => {
+  const retranscribe = async (lang: Lang) => {
     const changing = lang !== (project?.lang ?? "zh");
-    if (
-      segmentsRef.current.length > 0 &&
-      !confirm(
-        (changing ? `辨識語言改成「${langLabel(lang)}」並重跑。` : "") +
-          "重新辨識會覆蓋目前的字幕(舊字幕會備份成專案資料夾裡的 subtitles.bak.json)。確定繼續?"
-      )
-    ) {
-      return;
+    if (segmentsRef.current.length > 0) {
+      const ok = await ask(
+        (changing ? `辨識語言改成「${langLabel(lang)}」並重跑。\n` : "") +
+          "重新辨識會覆蓋目前的字幕(舊字幕會備份成專案資料夾裡的 subtitles.bak.json)。確定繼續?",
+        { confirmLabel: "重新辨識", danger: true }
+      );
+      if (!ok) return;
     }
     api
       .retranscribe(projectId, lang)
       .then(setProject)
-      .catch((e: Error) => alert(e.message));
+      .catch((e: Error) => notify(e.message));
   };
 
   // ---- 畫面 ----
@@ -643,7 +721,7 @@ export default function Editor({ projectId }: { projectId: string }) {
   const karaokeWordsActive = activeSeg ? usableWords(activeSeg) : null;
 
   return (
-    <div className="page">
+    <div className={"page" + (activePanel ? " panel-open" : "")}>
       <EditorTopbar
         project={project}
         saveState={saveState}
@@ -962,8 +1040,6 @@ export default function Editor({ projectId }: { projectId: string }) {
         </section>
       </main>
 
-      {dictOpen && <DictPanel onApply={applyDictEntries} onClose={() => setDictOpen(false)} />}
-
       <JobToasts
         projectId={projectId}
         fixJob={fix.fixJob}
@@ -977,35 +1053,65 @@ export default function Editor({ projectId }: { projectId: string }) {
         onDismissBurn={dismissBurn}
       />
 
-      {clipsOpen && (
-        <ClipsPanel
-          clips={clips}
-          exportJob={clipExport}
-          previewClipId={previewClipId}
-          projectId={projectId}
-          canStack={faceAvailable && isLandscape}
-          layoutBusyId={clipState.layoutBusyId}
-          onSetLayout={clipState.setClipLayout}
-          onPreview={clipState.startPreview}
-          onExitPreview={clipState.exitPreview}
-          onNudge={clipState.nudgeClip}
-          onRemove={clipState.removeClip}
-          onExport={clipState.startClipExport}
-          onReanalyze={clipState.reanalyzeClips}
-          onClose={clipState.closePanel}
-        />
-      )}
+      {activePanel && (
+        <div className="panel-dock">
+          {openPanels.length > 1 && (
+            <div className="panel-tabs">
+              {openPanels.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={k === activePanel}
+                  className={"panel-tab" + (k === activePanel ? " on" : "")}
+                  onClick={() => setPanelFocus(k)}
+                >
+                  {PANEL_LABEL[k]}
+                </button>
+              ))}
+            </div>
+          )}
 
-      {fix.reviewItems && (
-        <FixReviewPanel
-          items={fix.reviewItems}
-          running={fix.fixJob?.status === "running"}
-          onAcceptAll={fix.acceptAll}
-          onDismiss={fix.dismissReview}
-          onAccept={fix.acceptOne}
-          onSkip={fix.skipOne}
-          onSeek={fix.seekToSuggestion}
-        />
+          {dictOpen && (
+            <div className={"panel-slot" + (activePanel === "dict" ? "" : " hidden")}>
+              <DictPanel onApply={applyDictEntries} onClose={() => setDictOpen(false)} />
+            </div>
+          )}
+
+          {clipsOpen && (
+            <div className={"panel-slot" + (activePanel === "clips" ? "" : " hidden")}>
+              <ClipsPanel
+                clips={clips}
+                exportJob={clipExport}
+                previewClipId={previewClipId}
+                projectId={projectId}
+                canStack={faceAvailable && isLandscape}
+                layoutBusyId={clipState.layoutBusyId}
+                onSetLayout={clipState.setClipLayout}
+                onPreview={clipState.startPreview}
+                onExitPreview={exitPreview}
+                onNudge={clipState.nudgeClip}
+                onRemove={clipState.removeClip}
+                onExport={clipState.startClipExport}
+                onReanalyze={clipState.reanalyzeClips}
+                onClose={closePanel}
+              />
+            </div>
+          )}
+
+          {fix.reviewItems && (
+            <div className={"panel-slot" + (activePanel === "fix" ? "" : " hidden")}>
+              <FixReviewPanel
+                items={fix.reviewItems}
+                running={fix.fixJob?.status === "running"}
+                onAcceptAll={fix.acceptAll}
+                onDismiss={dismissReview}
+                onAccept={fix.acceptOne}
+                onSkip={fix.skipOne}
+                onSeek={fix.seekToSuggestion}
+              />
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { notify } from "../dialogs";
 import type { BurnJob } from "../types";
 
 /**
@@ -27,7 +28,7 @@ export function useBurnJob(projectId: string, ready: boolean, flushAll: () => Pr
     flushAll()
       .then(() => api.startBurn(projectId))
       .then(setBurnJob)
-      .catch((e: Error) => alert(e.message));
+      .catch((e: Error) => notify(e.message));
   }, [projectId, flushAll]);
 
   const cancelBurn = useCallback(() => {
@@ -42,15 +43,8 @@ export function useBurnJob(projectId: string, ready: boolean, flushAll: () => Pr
     const timer = setInterval(() => {
       api
         .getBurn(projectId)
-        .then((j) => {
-          if (j.status === "error") {
-            alert(`匯出失敗:${j.error ?? "未知錯誤"}`);
-            api.cancelBurn(projectId).catch(() => {});
-            setBurnJob(null);
-          } else {
-            setBurnJob(j);
-          }
-        })
+        // 失敗的狀態留在畫面上(JobToasts 會顯示原因),不要跳完視窗就把訊息弄丟
+        .then(setBurnJob)
         .catch(() => {});
     }, 1000);
     return () => clearInterval(timer);

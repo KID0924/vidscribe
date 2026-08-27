@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, uploadMedia } from "./api";
 import Brand from "./Brand";
+import { notify } from "./dialogs";
 import {
   LANG_OPTIONS,
   RUNNING_STATUSES,
@@ -12,10 +13,17 @@ import {
 import { formatTime } from "./segments";
 
 interface Upload {
+  id: number;
+  file: File;
   name: string;
+  /** 送出當下選的語言;之後改了下拉選單也不影響重試 */
+  lang: Lang;
   progress: number;
   error?: string;
 }
+
+/** 刪除專案後可以反悔的秒數 */
+const UNDO_MS = 5000;
 
 export default function Home() {
   const [projects, setProjects] = useState<Project[] | null>(null);
@@ -28,6 +36,10 @@ export default function Home() {
   const langRef = useRef(lang);
   langRef.current = lang;
   const fileInput = useRef<HTMLInputElement>(null);
+  const uploadSeq = useRef(0);
+  // 按了刪除但還在反悔期內的專案:先從列表拿掉,時間到才真的刪
+  const [trashed, setTrashed] = useState<Project[]>([]);
+  const trashTimers = useRef(new Map<string, number>());
 
   useEffect(() => {
     api
@@ -42,34 +54,103 @@ export default function Home() {
 
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, 2000);
-    return () => clearInterval(timer);
+    // 切回這個分頁時補問一次,才不用等下一輪
+    const onVisible = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refresh]);
 
-  const handleFiles = useCallback(
-    (files: FileList | File[]) => {
-      for (const file of Array.from(files)) {
-        const entry: Upload = { name: file.name, progress: 0 };
-        setUploads((u) => [...u, entry]);
-        uploadMedia(file, langRef.current, (ratio) => {
-          setUploads((u) => u.map((x) => (x === entry ? { ...x, progress: ratio } : x)));
+  // 有東西在跑才需要一直問;閒著時放慢,分頁在背景就完全不問
+  const busy =
+    uploads.length > 0 || (projects?.some((p) => RUNNING_STATUSES.includes(p.status)) ?? false);
+  useEffect(() => {
+    const timer = setInterval(
+      () => {
+        if (!document.hidden) refresh();
+      },
+      busy ? 2000 : 10000
+    );
+    return () => clearInterval(timer);
+  }, [refresh, busy]);
+
+  /** 送出(或重送)一筆上傳;entry 已經在清單裡,這裡只更新它的進度/錯誤。 */
+  const runUpload = useCallback(
+    (entry: Upload) => {
+      setUploads((u) =>
+        u.map((x) => (x.id === entry.id ? { ...x, progress: 0, error: undefined } : x))
+      );
+      uploadMedia(entry.file, entry.lang, (ratio) => {
+        setUploads((u) => u.map((x) => (x.id === entry.id ? { ...x, progress: ratio } : x)));
+      })
+        .then(() => {
+          setUploads((u) => u.filter((x) => x.id !== entry.id));
+          refresh();
         })
-          .then(() => {
-            setUploads((u) => u.filter((x) => x !== entry));
-            refresh();
-          })
-          .catch((err: Error) => {
-            setUploads((u) => u.map((x) => (x === entry ? { ...x, error: err.message } : x)));
-          });
-      }
+        .catch((err: Error) => {
+          setUploads((u) => u.map((x) => (x.id === entry.id ? { ...x, error: err.message } : x)));
+        });
     },
     [refresh]
   );
 
-  const deleteProject = (p: Project) => {
-    if (!confirm(`刪除「${p.name}」?專案裡的媒體檔和字幕都會一併刪除。`)) return;
-    api.deleteProject(p.id).then(refresh).catch((e: Error) => alert(e.message));
-  };
+  const handleFiles = useCallback(
+    (files: FileList | File[]) => {
+      const added: Upload[] = Array.from(files).map((file) => ({
+        id: ++uploadSeq.current,
+        file,
+        name: file.name,
+        lang: langRef.current,
+        progress: 0,
+      }));
+      setUploads((u) => [...u, ...added]);
+      added.forEach(runUpload);
+    },
+    [runUpload]
+  );
+
+  /** 刪除:先從列表拿掉並開始倒數,時間到才真的送出,中間可以反悔。 */
+  const deleteProject = useCallback(
+    (p: Project) => {
+      if (trashTimers.current.has(p.id)) return;
+      setTrashed((t) => [...t, p]);
+      trashTimers.current.set(
+        p.id,
+        window.setTimeout(() => {
+          trashTimers.current.delete(p.id);
+          setTrashed((t) => t.filter((x) => x.id !== p.id));
+          api
+            .deleteProject(p.id)
+            .then(refresh)
+            .catch((e: Error) => notify(e.message));
+        }, UNDO_MS)
+      );
+    },
+    [refresh]
+  );
+
+  const undoDelete = useCallback((id: string) => {
+    const timer = trashTimers.current.get(id);
+    if (timer !== undefined) window.clearTimeout(timer);
+    trashTimers.current.delete(id);
+    setTrashed((t) => t.filter((x) => x.id !== id));
+  }, []);
+
+  // 離開首頁(例如點進某個專案)就把還在倒數的刪除送出去,不要無聲無息地取消
+  useEffect(() => {
+    const timers = trashTimers.current;
+    return () => {
+      timers.forEach((timer, id) => {
+        window.clearTimeout(timer);
+        api.deleteProject(id).catch(() => {});
+      });
+      timers.clear();
+    };
+  }, []);
+
+  // 倒數中的專案先當作已經刪掉,不然每 2 秒的輪詢會把它抓回列表
+  const visible = (projects ?? []).filter((p) => !trashed.some((t) => t.id === p.id));
 
   return (
     <div className="page">
@@ -142,17 +223,20 @@ export default function Home() {
 
         {uploads.length > 0 && (
           <section className="upload-list">
-            {uploads.map((u, i) => (
-              <div key={i} className={"upload-item" + (u.error ? " failed" : "")}>
+            {uploads.map((u) => (
+              <div key={u.id} className={"upload-item" + (u.error ? " failed" : "")}>
                 <span className="upload-name">{u.name}</span>
                 {u.error ? (
                   <span className="upload-error">
                     {u.error}
+                    <button className="link-btn" onClick={() => runUpload(u)}>
+                      重試
+                    </button>
                     <button
                       className="link-btn"
-                      onClick={() => setUploads((list) => list.filter((x) => x !== u))}
+                      onClick={() => setUploads((list) => list.filter((x) => x.id !== u.id))}
                     >
-                      知道了
+                      不用了
                     </button>
                   </span>
                 ) : (
@@ -170,11 +254,11 @@ export default function Home() {
 
         {projects === null ? (
           <p className="empty-hint">載入中…</p>
-        ) : projects.length === 0 && uploads.length === 0 ? (
+        ) : visible.length === 0 && uploads.length === 0 ? (
           <p className="empty-hint">還沒有專案。丟一支影片進來,一兩分鐘後就有逐字稿。</p>
         ) : (
           <section className="project-grid">
-            {projects.map((p) => {
+            {visible.map((p) => {
               const running = RUNNING_STATUSES.includes(p.status);
               return (
                 <a key={p.id} className="project-card" href={`#/p/${p.id}`}>
@@ -213,6 +297,19 @@ export default function Home() {
           </section>
         )}
       </main>
+
+      {trashed.length > 0 && (
+        <div className="undo-bar" role="status">
+          {trashed.map((p) => (
+            <div key={p.id} className="undo-item">
+              <span className="undo-text">已刪除「{p.name}」</span>
+              <button className="btn small" onClick={() => undoDelete(p.id)}>
+                復原
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

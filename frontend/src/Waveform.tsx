@@ -11,6 +11,8 @@ import type { Segment } from "./types";
 const RULER_H = 22;
 const STRIP_H = 150;
 const MIN_LEN = 0.05;
+/** 播放頭翻頁時波形滑過去的時間 */
+const FOLLOW_MS = 220;
 
 interface WaveformProps {
   peaks: { rate: number; peaks: number[] };
@@ -82,6 +84,7 @@ export default function Waveform({
   const [createGhost, setCreateGhost] = useState<{ a: number; b: number } | null>(null);
   const createRef = useRef<{ t0: number; x0: number; active: boolean } | null>(null);
   const hoverRaf = useRef(0);
+  const followRaf = useRef(0);
 
   const maxPeak = useMemo(() => {
     let m = 0;
@@ -104,6 +107,32 @@ export default function Waveform({
     if (el) setScrollLeft(el.scrollLeft);
   }, []);
 
+  /**
+   * 把橫向捲動滑過去。直接設 scrollLeft 會讓整條波形瞬移,播放時每翻一頁閃一下;
+   * 系統設了「減少動態效果」或距離很短就照舊直接跳。
+   */
+  const glideTo = useCallback((target: number) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    cancelAnimationFrame(followRaf.current);
+    const from = el.scrollLeft;
+    const dist = target - from;
+    if (!dist) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced || Math.abs(dist) < 8) {
+      el.scrollLeft = target;
+      return;
+    }
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const p = Math.min((now - t0) / FOLLOW_MS, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.scrollLeft = from + dist * eased;
+      if (p < 1) followRaf.current = requestAnimationFrame(step);
+    };
+    followRaf.current = requestAnimationFrame(step);
+  }, []);
+
   // 播放時讓播放頭保持在視野內
   useEffect(() => {
     if (!isPlaying) return;
@@ -111,9 +140,11 @@ export default function Waveform({
     if (!el) return;
     const x = currentTime * pps;
     if (x < el.scrollLeft + 40 || x > el.scrollLeft + viewW - 80) {
-      el.scrollLeft = Math.max(0, x - viewW * 0.3);
+      glideTo(Math.max(0, x - viewW * 0.3));
     }
-  }, [currentTime, isPlaying, pps, viewW]);
+  }, [currentTime, isPlaying, pps, viewW, glideTo]);
+
+  useEffect(() => () => cancelAnimationFrame(followRaf.current), []);
 
   // 縮放時以視野中心為錨點
   const setZoom = useCallback(

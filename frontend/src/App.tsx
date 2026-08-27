@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import DialogHost from "./DialogHost";
 import Editor from "./Editor";
 import Home from "./Home";
+import { useMenuAutoClose } from "./editor/useMenuAutoClose";
 
 function parseHash(): { page: "home" } | { page: "editor"; id: string } {
   const m = location.hash.match(/^#\/p\/([a-z0-9]+)/);
@@ -9,6 +11,7 @@ function parseHash(): { page: "home" } | { page: "editor"; id: string } {
 
 export default function App() {
   const [route, setRoute] = useState(parseHash);
+  useMenuAutoClose();
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
@@ -16,5 +19,10 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  return route.page === "editor" ? <Editor key={route.id} projectId={route.id} /> : <Home />;
+  return (
+    <>
+      {route.page === "editor" ? <Editor key={route.id} projectId={route.id} /> : <Home />}
+      <DialogHost />
+    </>
+  );
 }
